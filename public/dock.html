@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>InstantDelay Dock</title>
+<style>
+  :root { --bg:#1e1f26; --panel:#2a2c36; --text:#e8e8ee; --muted:#9a9cab; --accent:#9147ff; --live:#21c26b; --warn:#f0a020; --bad:#e5484d; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:10px; background:var(--bg); color:var(--text); font:13px/1.4 system-ui, sans-serif; }
+  .row { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .big { font-size:28px; font-weight:700; font-variant-numeric:tabular-nums; }
+  .pill { padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; background:var(--panel); color:var(--muted); }
+  .pill.on { background:var(--live); color:#06210f; }
+  .pill.bad { background:var(--bad); color:#fff; }
+  .card { background:var(--panel); border-radius:8px; padding:10px; margin-bottom:8px; }
+  button { flex:1 1 60px; padding:8px 6px; border:0; border-radius:6px; background:#3a3d4a; color:var(--text); font-weight:600; cursor:pointer; }
+  button:hover { background:#474a5a; }
+  button.active { background:var(--accent); }
+  button.instant { background:var(--live); color:#06210f; flex-basis:100%; font-size:15px; padding:10px; }
+  .bar { height:6px; border-radius:3px; background:#3a3d4a; overflow:hidden; margin-top:6px; }
+  .bar > div { height:100%; background:var(--warn); width:0; transition:width .2s; }
+  input { width:70px; padding:7px; border-radius:6px; border:1px solid #444; background:#15161b; color:var(--text); }
+  .muted { color:var(--muted); font-size:11px; }
+  .alert { background:var(--bad); color:#fff; border-radius:8px; padding:8px 10px; margin-bottom:8px; font-weight:600; }
+</style>
+</head>
+<body>
+  <div class="alert" id="alert" style="display:none"></div>
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <div><div class="muted">Viewers are behind by</div><div class="big" id="eff">–</div></div>
+      <div class="row" style="flex-direction:column;align-items:flex-end;gap:4px">
+        <span class="pill" id="in">OBS</span>
+        <span class="pill" id="out">OUTPUT</span>
+      </div>
+    </div>
+    <div id="fillwrap" style="display:none">
+      <div class="muted" id="filltext">Building delay…</div>
+      <div class="bar"><div id="fill"></div></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="row"><button class="instant" onclick="api('/api/instant')">⚡ INSTANT (go live now)</button></div>
+    <div class="row" id="presets" style="margin-top:6px"></div>
+    <div class="row" style="margin-top:6px">
+      <input id="custom" type="number" min="0" placeholder="sec"><button onclick="setCustom()">Set</button>
+      <button onclick="api('/api/delay?add=-5')">−5s</button><button onclick="api('/api/delay?add=5')">+5s</button>
+    </div>
+  </div>
+  <div class="muted" id="stats"></div>
+<script>
+  const $ = (id) => document.getElementById(id);
+  let presetsBuilt = false;
+  const fmt = (ms) => ms < 1000 ? 'LIVE' : (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + 's';
+  function api(p) { fetch(p).catch(() => {}); }
+  function setCustom() { const raw = $('custom').value.trim(); const v = Number(raw); if (raw !== '' && v >= 0) api('/api/delay?sec=' + v); }
+  $('custom').addEventListener('keydown', (e) => { if (e.key === 'Enter') setCustom(); });
+  function alertMsg(text) { $('alert').textContent = text; $('alert').style.display = text ? '' : 'none'; }
+  function render(s) {
+    alertMsg(s.outputConfigured ? '' : 'No stream key: set "outputUrl" in config.json and restart InstantDelay.');
+    if (!presetsBuilt) {
+      $('presets').innerHTML = s.presetsSec.filter((p) => p > 0)
+        .map((p) => `<button data-sec="${p}" onclick="api('/api/delay?sec=${p}')">${p}s</button>`).join('');
+      presetsBuilt = true;
+    }
+    document.querySelectorAll('#presets button').forEach((b) => b.classList.toggle('active', Number(b.dataset.sec) * 1000 === s.delayMs));
+    $('eff').textContent = fmt(s.effectiveDelayMs);
+    $('in').className = 'pill ' + (s.inputActive ? 'on' : 'bad'); $('in').textContent = s.inputActive ? 'OBS ●' : 'OBS ○';
+    $('out').className = 'pill ' + (s.outputActive ? 'on' : (s.filling ? '' : 'bad')); $('out').textContent = s.outputActive ? 'OUTPUT ●' : 'OUTPUT ○';
+    $('fillwrap').style.display = s.filling ? '' : 'none';
+    $('fill').style.width = (s.fillProgress * 100) + '%';
+    $('filltext').textContent = `Building delay… ${fmt(s.bufferedMs)} / ${fmt(s.delayMs)} (output paused)`;
+    $('stats').textContent = `target ${s.delayMs / 1000}s · buffer ${(s.bufferedMs / 1000).toFixed(1)}s · in ${s.inTags} · out ${s.outTags} · skipped ${s.dropped}`;
+  }
+  const es = new EventSource('/api/events'); // reconnects by itself if InstantDelay restarts
+  es.onmessage = (e) => render(JSON.parse(e.data));
+  es.onerror = () => {
+    alertMsg('InstantDelay is not running. Start it (start.bat) and this dock reconnects.');
+    $('eff').textContent = '–';
+    $('in').className = $('out').className = 'pill bad';
+  };
+</script>
+</body>
+</html>

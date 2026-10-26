@@ -1,0 +1,13 @@
+{
+  "name": "instadelay_v1",
+  "version": "1.0.0",
+  "description": "Local RTMP delay proxy for OBS: switch stream delay live without restarting OBS",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test test/delay.test.js && node test/e2e.js",
+    "test:unit": "node --test test/delay.test.js"
+  },
+  "engines": { "node": ">=18" },
+  "license": "MIT"
+}

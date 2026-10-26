@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>InstantDelay Overlay</title>
+<style>
+  /* Transparent background for an OBS Browser Source. Add ?hideLive=1 to hide the badge when there's no delay. */
+  html, body { margin:0; background:transparent; overflow:hidden; }
+  #badge { position:absolute; top:16px; left:16px; display:inline-flex; align-items:center; gap:8px;
+    padding:8px 14px; border-radius:10px; font:700 22px/1 system-ui, sans-serif; color:#fff;
+    background:rgba(20,20,28,.78); transition:opacity .3s; }
+  .dot { width:12px; height:12px; border-radius:50%; background:#21c26b; }
+  .delayed .dot { background:#f0a020; }
+</style>
+</head>
+<body>
+  <div id="badge"><span class="dot"></span><span id="txt">LIVE</span></div>
+<script>
+  const hideLive = new URLSearchParams(location.search).has('hideLive');
+  const badge = document.getElementById('badge');
+  const es = new EventSource('/api/events');
+  es.onerror = () => { badge.style.opacity = 0; }; // never show a stale state
+  es.onmessage = (e) => {
+    const s = JSON.parse(e.data);
+    const delayed = s.effectiveDelayMs >= 1000;
+    badge.classList.toggle('delayed', delayed);
+    document.getElementById('txt').textContent = delayed ? `DELAY ${Math.round(s.effectiveDelayMs / 1000)}s` : 'LIVE';
+    badge.style.opacity = (!delayed && hideLive) ? 0 : 1;
+  };
+</script>
+</body>
+</html>

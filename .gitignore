@@ -1,0 +1,3 @@
+# Holds your stream key: never commit or share it.
+config.json
+.DS_Store
