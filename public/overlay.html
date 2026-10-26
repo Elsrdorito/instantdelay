@@ -4,27 +4,43 @@
 <meta charset="utf-8">
 <title>InstantDelay Overlay</title>
 <style>
-  /* Transparent background for an OBS Browser Source. Add ?hideLive=1 to hide the badge when there's no delay. */
-  html, body { margin:0; background:transparent; overflow:hidden; }
-  #badge { position:absolute; top:16px; left:16px; display:inline-flex; align-items:center; gap:8px;
-    padding:8px 14px; border-radius:10px; font:700 22px/1 system-ui, sans-serif; color:#fff;
-    background:rgba(20,20,28,.78); transition:opacity .3s; }
-  .dot { width:12px; height:12px; border-radius:50%; background:#21c26b; }
-  .delayed .dot { background:#f0a020; }
+  /* Transparent background for an OBS Browser Source.
+     Options (URL query):  ?hideLive=1   hide the badge when there is no delay
+                           ?pos=tl|tr|bl|br   corner (default tl)
+                           ?size=22      font size in px
+                           ?label=Delay  text before the seconds (default DELAY)
+                           ?bare=1       no background box */
+  html, body { margin: 0; background: transparent; overflow: hidden; }
+  #badge { position: absolute; display: inline-flex; align-items: center; gap: .45em; padding: .4em .7em; border-radius: .5em;
+    font: 700 var(--size, 22px)/1 "Bahnschrift", "Avenir Next Condensed", "DIN Alternate", "Helvetica Neue", Arial, sans-serif;
+    letter-spacing: .06em; color: #fff; background: rgba(12, 13, 16, .8); border: 1px solid rgba(255,255,255,.08);
+    font-variant-numeric: tabular-nums; transition: opacity .3s; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
+  #badge.bare { background: transparent; border-color: transparent; padding: 0; }
+  .dot { width: .55em; height: .55em; border-radius: 50%; background: #3ddc84; box-shadow: 0 0 .4em #3ddc84; }
+  .delayed .dot { background: #ffb020; box-shadow: 0 0 .4em #ffb020; }
+  .filling .dot { animation: blink 1s steps(2, start) infinite; }
+  @keyframes blink { to { visibility: hidden; } }
+  .tl { top: 16px; left: 16px; } .tr { top: 16px; right: 16px; } .bl { bottom: 16px; left: 16px; } .br { bottom: 16px; right: 16px; }
 </style>
 </head>
 <body>
-  <div id="badge"><span class="dot"></span><span id="txt">LIVE</span></div>
+  <div id="badge" class="tl"><span class="dot"></span><span id="txt">LIVE</span></div>
 <script>
-  const hideLive = new URLSearchParams(location.search).has('hideLive');
+  const q = new URLSearchParams(location.search);
+  const hideLive = q.has('hideLive');
+  const label = q.get('label') || 'DELAY';
   const badge = document.getElementById('badge');
+  badge.className = ['tl', 'tr', 'bl', 'br'].includes(q.get('pos')) ? q.get('pos') : 'tl';
+  if (q.has('bare')) badge.classList.add('bare');
+  if (q.get('size')) badge.style.setProperty('--size', parseInt(q.get('size'), 10) + 'px');
   const es = new EventSource('/api/events');
   es.onerror = () => { badge.style.opacity = 0; }; // never show a stale state
   es.onmessage = (e) => {
     const s = JSON.parse(e.data);
-    const delayed = s.effectiveDelayMs >= 1000;
+    const delayed = s.effectiveDelayMs >= 1000 || s.filling;
     badge.classList.toggle('delayed', delayed);
-    document.getElementById('txt').textContent = delayed ? `DELAY ${Math.round(s.effectiveDelayMs / 1000)}s` : 'LIVE';
+    badge.classList.toggle('filling', !!s.filling);
+    document.getElementById('txt').textContent = delayed ? `${label} ${Math.round(s.effectiveDelayMs / 1000)}s` : 'LIVE';
     badge.style.opacity = (!delayed && hideLive) ? 0 : 1;
   };
 </script>

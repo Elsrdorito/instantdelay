@@ -3,83 +3,363 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>InstantDelay Dock</title>
+<meta name="color-scheme" content="dark">
+<title>InstantDelay</title>
 <style>
-  :root { --bg:#1e1f26; --panel:#2a2c36; --text:#e8e8ee; --muted:#9a9cab; --accent:#9147ff; --live:#21c26b; --warn:#f0a020; --bad:#e5484d; }
+  /* Works offline inside OBS: only fonts that ship with Windows / macOS. */
+  :root {
+    --bg: #0c0d10; --panel: #15171b; --panel-2: #1b1e24; --line: #262a31; --line-2: #343941;
+    --text: #e8e5dc; --muted: #80848e; --dim: #5a5e67;
+    --amber: #ffb020; --amber-dim: #6b4a0e; --green: #3ddc84; --red: #ff4a4a; --blue: #4ea1ff;
+    --font: "Bahnschrift", "Avenir Next Condensed", "DIN Alternate", "Helvetica Neue", Arial, sans-serif;
+    --mono: "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+    --r: 6px;
+  }
   * { box-sizing: border-box; }
-  body { margin:0; padding:10px; background:var(--bg); color:var(--text); font:13px/1.4 system-ui, sans-serif; }
-  .row { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
-  .big { font-size:28px; font-weight:700; font-variant-numeric:tabular-nums; }
-  .pill { padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; background:var(--panel); color:var(--muted); }
-  .pill.on { background:var(--live); color:#06210f; }
-  .pill.bad { background:var(--bad); color:#fff; }
-  .card { background:var(--panel); border-radius:8px; padding:10px; margin-bottom:8px; }
-  button { flex:1 1 60px; padding:8px 6px; border:0; border-radius:6px; background:#3a3d4a; color:var(--text); font-weight:600; cursor:pointer; }
-  button:hover { background:#474a5a; }
-  button.active { background:var(--accent); }
-  button.instant { background:var(--live); color:#06210f; flex-basis:100%; font-size:15px; padding:10px; }
-  .bar { height:6px; border-radius:3px; background:#3a3d4a; overflow:hidden; margin-top:6px; }
-  .bar > div { height:100%; background:var(--warn); width:0; transition:width .2s; }
-  input { width:70px; padding:7px; border-radius:6px; border:1px solid #444; background:#15161b; color:var(--text); }
-  .muted { color:var(--muted); font-size:11px; }
-  .alert { background:var(--bad); color:#fff; border-radius:8px; padding:8px 10px; margin-bottom:8px; font-weight:600; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; padding: 8px; background: var(--bg); color: var(--text);
+    font: 13px/1.35 var(--font); -webkit-font-smoothing: antialiased; overflow-x: hidden;
+  }
+  button, input, select { font: inherit; color: inherit; }
+  button { cursor: pointer; border: 1px solid var(--line-2); background: var(--panel-2); border-radius: var(--r); padding: 7px 6px; font-weight: 600; letter-spacing: .02em; transition: background .12s, border-color .12s, transform .05s; }
+  button:hover { background: #242830; border-color: #434954; }
+  button:active { transform: translateY(1px); }
+  button:disabled { opacity: .35; cursor: not-allowed; transform: none; }
+  button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+  .k { font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+
+  /* header */
+  header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 6px; padding: 2px 0 8px; }
+  .brand { display: flex; align-items: baseline; gap: 6px; }
+  .brand b { font-size: 12px; letter-spacing: .18em; text-transform: uppercase; }
+  .brand span { font: 10px var(--mono); color: var(--dim); }
+  .lamps { display: flex; gap: 8px; margin-left: auto; }
+  .lamp { display: flex; align-items: center; gap: 5px; font-size: 10px; letter-spacing: .12em; color: var(--muted); font-weight: 600; }
+  .lamp i { width: 9px; height: 9px; border-radius: 50%; background: #2b2f36; box-shadow: inset 0 0 0 1px #3a3f48; transition: background .2s, box-shadow .2s; }
+  .lamp.on i { background: var(--green); box-shadow: 0 0 6px var(--green), 0 0 1px #000; }
+  .lamp.bad i { background: var(--red); box-shadow: 0 0 6px rgba(255,74,74,.6); }
+  .lamp.wait i { background: var(--amber); animation: blink 1s steps(2, start) infinite; }
+  @keyframes blink { to { visibility: hidden; } }
+  .icon { width: 26px; height: 26px; padding: 0; display: grid; place-items: center; border-radius: var(--r); background: transparent; border-color: transparent; color: var(--muted); }
+  .icon:hover { background: var(--panel-2); color: var(--text); }
+  .icon.active { background: var(--panel-2); color: var(--text); border-color: var(--line-2); }
+  .icon svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* cards */
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 8px; position: relative; }
+  .alert { display: none; background: #3a1414; border: 1px solid #6b2222; color: #ffd6d6; border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; font-weight: 600; }
+  .alert.show { display: block; }
+  .alert.warn { background: #3a2a0e; border-color: #6b4a0e; color: #ffe6b3; }
+
+  /* readout */
+  .readout { background: linear-gradient(#0a0b0d, #0e1013); border: 1px solid #2a2e35; box-shadow: inset 0 2px 8px rgba(0,0,0,.6), inset 0 0 0 1px #000; border-radius: 6px; padding: 8px 10px 10px; position: relative; overflow: hidden; }
+  .readout::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(0deg, rgba(255,255,255,.025) 0 1px, transparent 1px 3px); }
+  .readout .k { color: var(--dim); }
+  .num { font-size: clamp(34px, 18vw, 52px); line-height: 1; font-weight: 700; letter-spacing: -.01em; font-variant-numeric: tabular-nums; color: var(--amber); text-shadow: 0 0 14px rgba(255,176,32,.35); margin-top: 2px; transition: color .25s, text-shadow .25s; }
+  .num small { font-size: .42em; font-weight: 600; margin-left: 2px; color: var(--amber-dim); color: color-mix(in srgb, var(--amber) 55%, transparent); }
+  .num.live { color: var(--green); text-shadow: 0 0 14px rgba(61,220,132,.35); letter-spacing: .06em; }
+  .num.off { color: var(--dim); text-shadow: none; }
+  .num.tick { animation: flash .35s; }
+  @keyframes flash { 0% { filter: brightness(1.8); } }
+  .sub { display: flex; justify-content: space-between; gap: 8px; margin-top: 6px; font: 11px var(--mono); color: var(--muted); }
+  .bar { height: 5px; border-radius: 3px; background: #1d2027; overflow: hidden; margin-top: 8px; display: none; }
+  .bar > div { height: 100%; width: 0; background: repeating-linear-gradient(-45deg, var(--amber) 0 6px, #d08f12 6px 12px); background-size: 17px 100%; animation: stripes .6s linear infinite; transition: width .25s; }
+  @keyframes stripes { to { background-position: 17px 0; } }
+  .filling .bar { display: block; }
+
+  /* controls */
+  .instant { width: 100%; padding: 11px 8px; font-size: 15px; letter-spacing: .12em; text-transform: uppercase; background: linear-gradient(#2a7a4e, #1f5e3c); border-color: #2f8f5c; color: #eafff2; text-shadow: 0 1px 0 rgba(0,0,0,.4); }
+  .instant:hover { background: linear-gradient(#319058, #246e46); }
+  .instant.now { background: var(--panel-2); border-color: var(--line-2); color: var(--muted); text-shadow: none; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(52px, 1fr)); gap: 5px; margin-top: 6px; }
+  .grid button { padding: 8px 2px; font-variant-numeric: tabular-nums; }
+  .grid button.active { background: #3a2a0e; border-color: var(--amber); color: #ffd98a; box-shadow: inset 0 0 0 1px rgba(255,176,32,.25); }
+  .row { display: flex; gap: 5px; margin-top: 6px; }
+  .row input { flex: 1 1 50px; min-width: 0; padding: 7px 8px; border-radius: var(--r); border: 1px solid var(--line-2); background: #0e1013; font-variant-numeric: tabular-nums; }
+  .row input::placeholder { color: var(--dim); }
+  .row button { flex: 0 0 auto; min-width: 44px; }
+  .section { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; margin-bottom: 4px; }
+  .cut { display: grid; grid-template-columns: repeat(auto-fit, minmax(56px, 1fr)); gap: 5px; }
+  .cut button { border-color: #4a2020; background: #1d1113; color: #ffb3b3; }
+  .cut button:hover { background: #2c1518; border-color: #7a2a2a; }
+  .cut button.armed { background: var(--red); border-color: #ff7a7a; color: #fff; animation: pulse .8s ease-in-out infinite; }
+  @keyframes pulse { 50% { filter: brightness(1.25); } }
+  .hint { font-size: 11px; color: var(--dim); margin-top: 6px; min-height: 14px; }
+  .hint b { color: #ffb3b3; }
+
+  /* footer stats */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(70px, 1fr)); gap: 6px 10px; font: 11px var(--mono); color: var(--muted); }
+  .stats div span { display: block; font-size: 9px; letter-spacing: .14em; color: var(--dim); font-family: var(--font); font-weight: 600; }
+  .stats div { font-variant-numeric: tabular-nums; }
+
+  /* panels */
+  .panel { display: none; }
+  .panel.show { display: block; }
+  .field { display: flex; flex-direction: column; gap: 3px; margin-top: 8px; }
+  .field input, .field select { padding: 7px 8px; border-radius: var(--r); border: 1px solid var(--line-2); background: #0e1013; width: 100%; }
+  .field small { color: var(--dim); font-size: 11px; }
+  details { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 6px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; font-weight: 600; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .save { margin-top: 10px; display: flex; gap: 6px; align-items: center; }
+  .save button.primary { background: #1f4f7a; border-color: #2f74b3; color: #e4f1ff; }
+  .msg { font-size: 11px; color: var(--muted); }
+  .msg.ok { color: var(--green); } .msg.err { color: #ff9a9a; }
+  .log { font: 10.5px/1.45 var(--mono); color: #b9bcc4; background: #0a0b0d; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; max-height: 260px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+  .log time { color: var(--dim); margin-right: 6px; }
+  .log .w { color: #ffd98a; } .log .e { color: #ff9a9a; }
+  .locked .controls button:not(.instant), .locked .controls input { opacity: .35; pointer-events: none; }
+  @media (max-width: 360px) { .brand span { display: none; } }
+  /* narrow docks */
+  @media (max-width: 270px) {
+    body { padding: 6px; }
+    .sub span:last-child { display: none; }
+    .sub { font-size: 10px; }
+    .row { flex-wrap: wrap; }
+    .row input { flex-basis: 100%; order: -1; }
+    .row button { flex: 1 1 0; }
+    .stats { grid-template-columns: 1fr 1fr; }
+  }
+  .locked .instant { opacity: .35; pointer-events: none; }
 </style>
 </head>
 <body>
-  <div class="alert" id="alert" style="display:none"></div>
-  <div class="card">
-    <div class="row" style="justify-content:space-between">
-      <div><div class="muted">Viewers are behind by</div><div class="big" id="eff">–</div></div>
-      <div class="row" style="flex-direction:column;align-items:flex-end;gap:4px">
-        <span class="pill" id="in">OBS</span>
-        <span class="pill" id="out">OUTPUT</span>
-      </div>
-    </div>
-    <div id="fillwrap" style="display:none">
-      <div class="muted" id="filltext">Building delay…</div>
-      <div class="bar"><div id="fill"></div></div>
-    </div>
+<header>
+  <div class="brand"><b>InstantDelay</b><span id="ver"></span></div>
+  <div class="lamps">
+    <div class="lamp" id="lampIn"><i></i>OBS</div>
+    <div class="lamp" id="lampOut"><i></i>OUT</div>
   </div>
-  <div class="card">
-    <div class="row"><button class="instant" onclick="api('/api/instant')">⚡ INSTANT (go live now)</button></div>
-    <div class="row" id="presets" style="margin-top:6px"></div>
-    <div class="row" style="margin-top:6px">
-      <input id="custom" type="number" min="0" placeholder="sec"><button onclick="setCustom()">Set</button>
-      <button onclick="api('/api/delay?add=-5')">−5s</button><button onclick="api('/api/delay?add=5')">+5s</button>
-    </div>
+  <div style="display:flex;gap:2px">
+    <button class="icon" id="btnLock" title="Lock controls (prevents misclicks)" aria-label="Lock controls"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path id="shackle" d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></button>
+    <button class="icon" id="btnLog" title="Log" aria-label="Show log"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg></button>
+    <button class="icon" id="btnSettings" title="Settings" aria-label="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
   </div>
-  <div class="muted" id="stats"></div>
+</header>
+
+<div class="alert" id="alert" role="status"></div>
+
+<section class="card" id="main">
+  <div class="readout" id="readout">
+    <div class="k" id="label">Viewers are behind by</div>
+    <div class="num off" id="num">–</div>
+    <div class="bar"><div id="fill"></div></div>
+    <div class="sub"><span id="subL"></span><span id="subR"></span></div>
+  </div>
+</section>
+
+<section class="card controls" id="controls">
+  <button class="instant" id="btnInstant" data-sec="0">⚡ Instant · go live</button>
+  <div class="grid" id="presets"></div>
+  <div class="row">
+    <button data-add="-5" title="5 seconds less">−5</button>
+    <input id="custom" type="number" min="0" step="1" inputmode="numeric" placeholder="custom s" aria-label="Custom delay in seconds">
+    <button id="btnSet">Set</button>
+    <button data-add="5" title="5 seconds more">+5</button>
+  </div>
+  <div class="section"><span class="k">Cut the last…</span><span class="k" id="bufK" style="color:var(--dim)"></span></div>
+  <div class="cut" id="cut">
+    <button data-cut="10">10 s</button><button data-cut="30">30 s</button><button data-cut="60">60 s</button><button data-cut="all">all</button>
+  </div>
+  <div class="hint" id="hint">Removes what viewers haven't seen yet. The stream freezes that long once it gets there.</div>
+</section>
+
+<section class="card panel" id="settings">
+  <div class="k">Settings</div>
+  <div class="field"><label class="k" for="fKey">Stream key or RTMP URL</label>
+    <input id="fKey" type="password" autocomplete="off" placeholder="leave empty to keep the current one">
+    <small id="outNow"></small></div>
+  <div class="field"><label class="k" for="fPresets">Preset buttons (seconds)</label><input id="fPresets" placeholder="0, 5, 15, 30, 60, 120"></div>
+  <div class="two">
+    <div class="field"><label class="k" for="fMax">Max delay (s)</label><input id="fMax" type="number" min="1" max="3600"></div>
+    <div class="field"><label class="k" for="fIdle">End stream after OBS stops (s)</label><input id="fIdle" type="number" min="0" max="86400"></div>
+  </div>
+  <div class="field"><label class="k" for="fInit">Delay at startup (s)</label><input id="fInit" type="number" min="0" max="3600"></div>
+  <details><summary>Advanced · needs a restart</summary>
+    <div class="two">
+      <div class="field"><label class="k" for="fHost">Listen on</label><select id="fHost"><option value="127.0.0.1">This PC only</option><option value="0.0.0.0">Whole network</option></select></div>
+      <div class="field"><label class="k" for="fRtmpPort">RTMP port</label><input id="fRtmpPort" type="number" min="1" max="65535"></div>
+      <div class="field"><label class="k" for="fIngestKey">Required OBS key</label><input id="fIngestKey" placeholder="any"></div>
+      <div class="field"><label class="k" for="fHttpPort">Dock port</label><input id="fHttpPort" type="number" min="1" max="65535"></div>
+      <div class="field"><label class="k" for="fTransport">Transport</label><select id="fTransport"><option value="native">Native RTMP</option><option value="ffmpeg">ffmpeg</option></select></div>
+      <div class="field"><label class="k" for="fFfmpeg">ffmpeg path</label><input id="fFfmpeg"></div>
+    </div>
+  </details>
+  <div class="save"><button class="primary" id="btnSave">Save</button><span class="msg" id="saveMsg"></span></div>
+</section>
+
+<section class="card panel" id="logPanel">
+  <div class="section" style="margin-top:0"><span class="k">Log</span><span class="k" id="logInfo"></span></div>
+  <div class="log" id="log" aria-live="polite"></div>
+</section>
+
+<section class="card">
+  <div class="stats">
+    <div><span>In</span><b id="sIn">–</b></div>
+    <div><span>Out</span><b id="sOut">–</b></div>
+    <div><span>Buffer</span><b id="sBuf">–</b></div>
+    <div><span>Skipped</span><b id="sDrop">–</b></div>
+  </div>
+</section>
+
 <script>
+(() => {
   const $ = (id) => document.getElementById(id);
-  let presetsBuilt = false;
-  const fmt = (ms) => ms < 1000 ? 'LIVE' : (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + 's';
-  function api(p) { fetch(p).catch(() => {}); }
-  function setCustom() { const raw = $('custom').value.trim(); const v = Number(raw); if (raw !== '' && v >= 0) api('/api/delay?sec=' + v); }
+  const fmtS = (ms) => (ms / 1000).toFixed(ms < 10000 ? 1 : 0);
+  const fmtB = (b) => b < 1048576 ? (b / 1024).toFixed(0) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
+  const api = (p) => fetch(p).then((r) => r.json()).catch(() => null);
+  let s = null, cfg = null, lastNum = '', armed = null, armTimer = 0, logSeq = 0, locked = false;
+  try { locked = localStorage.getItem('id.lock') === '1'; } catch {}
+
+  // ---- lock
+  const setLock = (v) => { locked = v; document.body.classList.toggle('locked', v); $('btnLock').classList.toggle('active', v);
+    $('shackle').setAttribute('d', v ? 'M8 11V7a4 4 0 0 1 8 0v4' : 'M8 11V7a4 4 0 0 1 7.9-.8'); try { localStorage.setItem('id.lock', v ? '1' : '0'); } catch {} };
+  $('btnLock').onclick = () => setLock(!locked);
+  setLock(locked);
+
+  // ---- controls
+  const setDelay = (sec) => api('/api/delay?sec=' + sec);
+  $('btnInstant').onclick = () => api('/api/instant');
+  document.querySelectorAll('[data-add]').forEach((b) => b.onclick = () => api('/api/delay?add=' + b.dataset.add));
+  const setCustom = () => { const raw = $('custom').value.trim(); const v = Number(raw); if (raw !== '' && v >= 0) { setDelay(v); $('custom').value = ''; } };
+  $('btnSet').onclick = setCustom;
   $('custom').addEventListener('keydown', (e) => { if (e.key === 'Enter') setCustom(); });
-  function alertMsg(text) { $('alert').textContent = text; $('alert').style.display = text ? '' : 'none'; }
-  function render(s) {
-    alertMsg(s.outputConfigured ? '' : 'No stream key: set "outputUrl" in config.json and restart InstantDelay.');
-    if (!presetsBuilt) {
-      $('presets').innerHTML = s.presetsSec.filter((p) => p > 0)
-        .map((p) => `<button data-sec="${p}" onclick="api('/api/delay?sec=${p}')">${p}s</button>`).join('');
-      presetsBuilt = true;
+  $('presets').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) setDelay(b.dataset.sec); });
+
+  // Cut: first tap arms, second tap within 3s fires.
+  const disarm = () => { armed = null; clearTimeout(armTimer); document.querySelectorAll('#cut button').forEach((b) => b.classList.remove('armed')); $('hint').innerHTML = 'Removes what viewers haven\'t seen yet. The stream freezes that long once it gets there.'; };
+  $('cut').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    const v = b.dataset.cut;
+    if (armed === v) { disarm(); api('/api/cut?sec=' + (v === 'all' ? 86400 : v)); return; }
+    disarm(); armed = v; b.classList.add('armed');
+    $('hint').innerHTML = `<b>Tap again</b> to cut ${v === 'all' ? 'the whole buffer' : 'the last ' + v + ' s'}.`;
+    armTimer = setTimeout(disarm, 3000);
+  });
+
+  // Keyboard (when the dock has focus): 1-9 presets, 0 instant, Esc disarm.
+  document.addEventListener('keydown', (e) => {
+    if (e.target.matches('input,select,textarea') || locked || !s) return;
+    if (e.key === 'Escape') disarm();
+    if (e.key === '0') api('/api/instant');
+    if (/^[1-9]$/.test(e.key)) { const p = s.presetsSec.filter((x) => x > 0)[Number(e.key) - 1]; if (p !== undefined) setDelay(p); }
+  });
+
+  // ---- panels
+  const panels = { settings: $('settings'), log: $('logPanel') };
+  let open = null;
+  const show = (name) => {
+    open = open === name ? null : name;
+    for (const [k, el] of Object.entries(panels)) el.classList.toggle('show', open === k);
+    $('btnSettings').classList.toggle('active', open === 'settings');
+    $('btnLog').classList.toggle('active', open === 'log');
+    if (open === 'settings') loadSettings();
+    if (open === 'log') loadLog(true);
+  };
+  $('btnSettings').onclick = () => show('settings');
+  $('btnLog').onclick = () => show('log');
+
+  async function loadSettings() {
+    cfg = await api('/api/config'); if (!cfg) return;
+    $('fKey').value = '';
+    $('outNow').textContent = cfg.outputMasked ? 'Now: ' + cfg.outputMasked : 'No stream key set yet. Twitch: dashboard.twitch.tv → Settings → Stream → Primary Stream key.';
+    $('fPresets').value = cfg.presetsSec.join(', ');
+    $('fMax').value = cfg.maxDelaySec; $('fIdle').value = cfg.endAfterIdleSec; $('fInit').value = cfg.initialDelaySec;
+    $('fHost').value = cfg.rtmpHost === '0.0.0.0' ? '0.0.0.0' : '127.0.0.1';
+    $('fRtmpPort').value = cfg.rtmpPort; $('fIngestKey').value = cfg.ingestKey; $('fHttpPort').value = cfg.httpPort;
+    $('fTransport').value = cfg.transport; $('fFfmpeg').value = cfg.ffmpegPath;
+    $('saveMsg').textContent = ''; $('saveMsg').className = 'msg';
+  }
+  $('btnSave').onclick = async () => {
+    const presets = $('fPresets').value.split(/[\s,;]+/).filter(Boolean).map(Number);
+    const body = {
+      presetsSec: presets, maxDelaySec: Number($('fMax').value), endAfterIdleSec: Number($('fIdle').value), initialDelaySec: Number($('fInit').value),
+      rtmpHost: $('fHost').value, rtmpPort: Number($('fRtmpPort').value), ingestKey: $('fIngestKey').value.trim(), httpPort: Number($('fHttpPort').value),
+      transport: $('fTransport').value, ffmpegPath: $('fFfmpeg').value.trim() || 'ffmpeg',
+    };
+    if ($('fKey').value.trim()) body.streamKey = $('fKey').value.trim();
+    const m = $('saveMsg'); m.className = 'msg'; m.textContent = 'Saving…';
+    try {
+      const r = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || r.statusText);
+      m.className = 'msg ok';
+      m.textContent = j.restartRequired.length ? 'Saved. Restart InstantDelay to apply: ' + j.restartRequired.join(', ') : 'Saved.';
+      $('fKey').value = ''; cfg = j.config; $('outNow').textContent = cfg.outputMasked ? 'Now: ' + cfg.outputMasked : '';
+      presetsKey = '';
+    } catch (e) { m.className = 'msg err'; m.textContent = e.message; }
+  };
+
+  async function loadLog(reset) {
+    if (reset) { logSeq = 0; $('log').innerHTML = ''; }
+    const j = await api('/api/log?since=' + logSeq); if (!j) return;
+    const el = $('log');
+    const stick = el.scrollTop + el.clientHeight >= el.scrollHeight - 8;
+    for (const l of j.lines) {
+      const d = document.createElement('div');
+      d.className = /error|cannot|rejected|not keeping up|in use/i.test(l.text) ? 'e' : /retry|warn|disconnected|stopped|no data|replaced/i.test(l.text) ? 'w' : '';
+      const t = document.createElement('time'); t.textContent = l.time; d.appendChild(t); d.appendChild(document.createTextNode(l.text)); el.appendChild(d);
     }
-    document.querySelectorAll('#presets button').forEach((b) => b.classList.toggle('active', Number(b.dataset.sec) * 1000 === s.delayMs));
-    $('eff').textContent = fmt(s.effectiveDelayMs);
-    $('in').className = 'pill ' + (s.inputActive ? 'on' : 'bad'); $('in').textContent = s.inputActive ? 'OBS ●' : 'OBS ○';
-    $('out').className = 'pill ' + (s.outputActive ? 'on' : (s.filling ? '' : 'bad')); $('out').textContent = s.outputActive ? 'OUTPUT ●' : 'OUTPUT ○';
-    $('fillwrap').style.display = s.filling ? '' : 'none';
-    $('fill').style.width = (s.fillProgress * 100) + '%';
-    $('filltext').textContent = `Building delay… ${fmt(s.bufferedMs)} / ${fmt(s.delayMs)} (output paused)`;
-    $('stats').textContent = `target ${s.delayMs / 1000}s · buffer ${(s.bufferedMs / 1000).toFixed(1)}s · in ${s.inTags} · out ${s.outTags} · skipped ${s.dropped}`;
+    while (el.children.length > 300) el.removeChild(el.firstChild);
+    logSeq = j.seq;
+    if (stick || reset) el.scrollTop = el.scrollHeight;
+  }
+
+  // ---- render
+  let presetsKey = '';
+  function render(st) {
+    s = st;
+    $('ver').textContent = 'v' + (st.version || '');
+    const alert = $('alert');
+    if (!st.outputConfigured) { alert.className = 'alert show warn'; alert.textContent = 'No stream key yet: open Settings (⚙) and paste your Twitch stream key.'; }
+    else if (st.outputRetryInSec) { alert.className = 'alert show'; alert.textContent = `Output disconnected. Retrying in ${st.outputRetryInSec}s… (see Log)`; }
+    else alert.className = 'alert';
+
+    const key = st.presetsSec.join(',') + '|' + st.maxDelaySec;
+    if (key !== presetsKey) {
+      presetsKey = key;
+      $('presets').innerHTML = st.presetsSec.filter((p) => p > 0 && p <= st.maxDelaySec).map((p) => `<button data-sec="${p}">${p}s</button>`).join('');
+    }
+    document.querySelectorAll('#presets button').forEach((b) => b.classList.toggle('active', Number(b.dataset.sec) * 1000 === st.delayMs));
+    $('btnInstant').classList.toggle('now', st.delayMs === 0);
+
+    const num = $('num');
+    const noStream = !st.inputActive && !st.bufferTags;
+    let text;
+    if (noStream) { text = '–'; num.className = 'num off'; }
+    else if (st.effectiveDelayMs < 1000 && !st.filling) { text = 'LIVE'; num.className = 'num live'; }
+    else { text = fmtS(st.effectiveDelayMs) + '<small>s</small>'; num.className = 'num'; }
+    if (text !== lastNum) { num.innerHTML = text; lastNum = text; if (!noStream) { num.classList.add('tick'); setTimeout(() => num.classList.remove('tick'), 350); } }
+    $('readout').classList.toggle('filling', st.filling);
+    $('fill').style.width = (st.fillProgress * 100) + '%';
+    $('label').textContent = st.filling ? 'Building delay · output paused' : noStream ? 'Waiting for OBS' : 'Viewers are behind by';
+    $('subL').textContent = st.filling ? `${fmtS(st.bufferedMs)} / ${fmtS(st.delayMs)} s` : st.delayMs ? `target ${fmtS(st.delayMs)} s` : 'no delay';
+    $('subR').textContent = st.inputActive ? `${st.inKbps} kb/s in` : '';
+
+    const lampIn = $('lampIn'), lampOut = $('lampOut');
+    lampIn.className = 'lamp ' + (st.inputActive ? 'on' : st.inputConnected ? 'wait' : 'bad');
+    lampOut.className = 'lamp ' + (st.outputActive ? 'on' : st.outputConnecting ? 'wait' : st.filling && st.outputConfigured ? '' : 'bad');
+    lampOut.title = st.outputActive ? 'Sending to the ingest' : st.outputConnecting ? 'Connecting…' : st.filling ? 'Paused while the delay builds' : 'Not connected';
+
+    $('sIn').textContent = st.inputActive ? st.inKbps + ' kb/s' : '–';
+    $('sOut').textContent = st.outputActive ? st.outKbps + ' kb/s' : '–';
+    $('sBuf').textContent = st.bufferTags ? `${fmtS(st.bufferedMs)}s · ${fmtB(st.bufferedBytes)}` : '–';
+    $('sDrop').textContent = st.dropped;
+    $('bufK').textContent = st.bufferTags ? `buffer ${fmtS(st.bufferedMs)} s` : '';
+    document.querySelectorAll('#cut button').forEach((b) => { b.disabled = !st.bufferTags || (b.dataset.cut !== 'all' && Number(b.dataset.cut) * 1000 > st.bufferedMs + 500); });
+    if (open === 'log' && st.logSeq !== logSeq) loadLog(false);
+  }
+
+  function offline() {
+    $('alert').className = 'alert show'; $('alert').textContent = 'InstantDelay is not running. Start it (start.bat) and this dock reconnects by itself.';
+    $('num').className = 'num off'; $('num').textContent = '–'; lastNum = '';
+    $('lampIn').className = $('lampOut').className = 'lamp bad';
   }
   const es = new EventSource('/api/events'); // reconnects by itself if InstantDelay restarts
   es.onmessage = (e) => render(JSON.parse(e.data));
-  es.onerror = () => {
-    alertMsg('InstantDelay is not running. Start it (start.bat) and this dock reconnects.');
-    $('eff').textContent = '–';
-    $('in').className = $('out').className = 'pill bad';
-  };
+  es.onerror = offline;
+})();
 </script>
 </body>
 </html>
