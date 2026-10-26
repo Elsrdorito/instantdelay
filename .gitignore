@@ -4,3 +4,5 @@ config.json
 .DS_Store
 Thumbs.db
 node_modules/
+# Local-only history: v1 source, v1 zip, release zips. Not part of the repo.
+archive/
