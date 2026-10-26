@@ -16,7 +16,7 @@ class FlvFileOutput extends EventEmitter {
   connect() {
     this.ws = fs.createWriteStream(this.file);
     this.ws.on('error', (e) => { if (!this.closed) { this.closed = true; this.emit('error', e); this.emit('close'); } });
-    this.ws.on('open', () => { this.ws.write(flvHeader()); this.ready = true; this.emit('ready'); });
+    this.ws.on('open', () => { this.ws.write(flvHeader()); this.ready = true; this.emit('ready'); this.emit('connected'); });
     this.ws.on('close', () => { if (!this.closed) { this.closed = true; this.emit('close'); } });
   }
   send(tag) { return this.ready && !this.closed ? this.ws.write(encodeTag(tag.type, tag.ts, tag.data)) : false; }

@@ -121,7 +121,7 @@ class RtmpPublisher extends EventEmitter {
     } else if (name === 'onStatus') {
       const code = String(info.code || '');
       if (code === 'NetStream.Publish.Start') {
-        if (!this.ready) { clearTimeout(this.timer); this.ready = true; this.emit('ready'); }
+        if (!this.ready) { clearTimeout(this.timer); this.ready = true; this.emit('ready'); this.emit('connected'); }
       } else if (info.level === 'error' || /Failed|BadName|Rejected|Unpublish/.test(code)) {
         this._fail(new Error(`${code}: ${info.description || 'publish rejected'}`));
       }

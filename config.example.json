@@ -1,11 +1,13 @@
 {
-  "rtmpHost": "127.0.0.1",
-  "rtmpPort": 1935,
-  "httpPort": 8787,
   "outputUrl": "rtmp://live.twitch.tv/app/YOUR_TWITCH_STREAM_KEY",
   "presetsSec": [0, 5, 15, 30, 60, 120],
   "maxDelaySec": 300,
   "initialDelaySec": 0,
   "endAfterIdleSec": 30,
+  "rtmpHost": "127.0.0.1",
+  "rtmpPort": 1935,
+  "ingestKey": "",
+  "httpPort": 8787,
+  "transport": "native",
   "ffmpegPath": "ffmpeg"
 }
