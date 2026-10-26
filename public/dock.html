@@ -182,8 +182,8 @@
       <div class="field"><label class="k" for="fRtmpPort">RTMP port</label><input id="fRtmpPort" type="number" min="1" max="65535"></div>
       <div class="field"><label class="k" for="fIngestKey">Required OBS key</label><input id="fIngestKey" placeholder="any"></div>
       <div class="field"><label class="k" for="fHttpPort">Dock port</label><input id="fHttpPort" type="number" min="1" max="65535"></div>
-      <div class="field"><label class="k" for="fTransport">Transport</label><select id="fTransport"><option value="native">Native RTMP</option><option value="ffmpeg">ffmpeg</option></select></div>
-      <div class="field"><label class="k" for="fFfmpeg">ffmpeg path</label><input id="fFfmpeg"></div>
+      <div class="field"><label class="k" for="fTransport">Transport</label><select id="fTransport"><option value="native">Native RTMP</option><option value="ffmpeg">ffmpeg (fallback)</option></select></div>
+      <div class="field"><label class="k" for="fMaxBuf">Memory cap (MB)</label><input id="fMaxBuf" type="number" min="16" max="65536"></div>
     </div>
   </details>
   <div class="save"><button class="primary" id="btnSave">Save</button><span class="msg" id="saveMsg"></span></div>
@@ -268,7 +268,7 @@
     $('fMax').value = cfg.maxDelaySec; $('fIdle').value = cfg.endAfterIdleSec; $('fInit').value = cfg.initialDelaySec;
     $('fHost').value = cfg.rtmpHost === '0.0.0.0' ? '0.0.0.0' : '127.0.0.1';
     $('fRtmpPort').value = cfg.rtmpPort; $('fIngestKey').value = cfg.ingestKey; $('fHttpPort').value = cfg.httpPort;
-    $('fTransport').value = cfg.transport; $('fFfmpeg').value = cfg.ffmpegPath;
+    $('fTransport').value = cfg.transport; $('fMaxBuf').value = cfg.maxBufferMB;
     $('saveMsg').textContent = ''; $('saveMsg').className = 'msg';
   }
   $('btnSave').onclick = async () => {
@@ -276,7 +276,7 @@
     const body = {
       presetsSec: presets, maxDelaySec: Number($('fMax').value), endAfterIdleSec: Number($('fIdle').value), initialDelaySec: Number($('fInit').value),
       rtmpHost: $('fHost').value, rtmpPort: Number($('fRtmpPort').value), ingestKey: $('fIngestKey').value.trim(), httpPort: Number($('fHttpPort').value),
-      transport: $('fTransport').value, ffmpegPath: $('fFfmpeg').value.trim() || 'ffmpeg',
+      transport: $('fTransport').value, maxBufferMB: Number($('fMaxBuf').value),
     };
     if ($('fKey').value.trim()) body.streamKey = $('fKey').value.trim();
     const m = $('saveMsg'); m.className = 'msg'; m.textContent = 'Saving…';

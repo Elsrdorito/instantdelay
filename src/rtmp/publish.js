@@ -126,6 +126,8 @@ class RtmpPublisher extends EventEmitter {
         this._fail(new Error(`${code}: ${info.description || 'publish rejected'}`));
       }
     } else if (name === '_error') {
+      // Some servers answer releaseStream / FCPublish with "Method not found"; ffmpeg ignores that too.
+      if (txn === 2 || txn === 3) return;
       this._fail(new Error(`${info.code || 'error'}: ${info.description || 'connection rejected'}`));
     }
   }

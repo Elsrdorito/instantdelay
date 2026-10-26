@@ -2,6 +2,7 @@
   "outputUrl": "rtmp://live.twitch.tv/app/YOUR_TWITCH_STREAM_KEY",
   "presetsSec": [0, 5, 15, 30, 60, 120],
   "maxDelaySec": 300,
+  "maxBufferMB": 1024,
   "initialDelaySec": 0,
   "endAfterIdleSec": 30,
   "rtmpHost": "127.0.0.1",

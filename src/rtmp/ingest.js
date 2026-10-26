@@ -70,6 +70,11 @@ class RtmpIngest extends EventEmitter {
 
   _message(conn, reader, m) {
     switch (m.type) {
+      case MSG.DATA_AMF3: case MSG.COMMAND_AMF3:
+        // AMF3 messages from OBS-compatible clients are one 0x00 byte followed by AMF0.
+        if (!m.payload.length || m.payload[0] !== 0) return;
+        m = { ...m, type: m.type === MSG.DATA_AMF3 ? MSG.DATA_AMF0 : MSG.COMMAND_AMF0, payload: m.payload.subarray(1) };
+        return this._message(conn, reader, m);
       case MSG.AUDIO: case MSG.VIDEO: case MSG.DATA_AMF0:
         if (!conn.publishing) return;
         this._media(conn, m);
@@ -86,9 +91,6 @@ class RtmpIngest extends EventEmitter {
         }
         return;
       case MSG.SET_CHUNK_SIZE: case MSG.ACK: case MSG.ABORT: case MSG.SET_PEER_BW:
-        return;
-      case MSG.DATA_AMF3: case MSG.COMMAND_AMF3:
-        if (!conn.warnedAmf3) { conn.warnedAmf3 = true; this.emit('warn', `${conn.peer}: AMF3 messages are ignored`); }
         return;
       default:
         return;

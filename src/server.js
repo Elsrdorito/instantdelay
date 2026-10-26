@@ -44,7 +44,7 @@ if (config.transport === 'ffmpeg') {
   }
 }
 
-const engine = new DelayEngine({ delayMs: config.initialDelaySec * 1000, maxDelayMs: config.maxDelaySec * 1000 });
+const engine = new DelayEngine({ delayMs: config.initialDelaySec * 1000, maxDelayMs: config.maxDelaySec * 1000, maxBufferBytes: config.maxBufferMB * 1048576 });
 engine.start();
 
 // ------------------------------------------------------------------ lifecycle
@@ -74,7 +74,11 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) process.on(sig, (
 // When started by another Node process (the tests), follow its lifetime.
 process.on('message', (m) => { if (m === 'shutdown') shutdown('requested'); });
 process.on('disconnect', () => shutdown('parent exited'));
-process.on('uncaughtException', (e) => { log(`unexpected error: ${e.stack || e}`); });
+let running = false;
+process.on('uncaughtException', (e) => {
+  if (!running) fail(`startup failed: ${e.stack || e}`);
+  log(`unexpected error: ${e.stack || e}`);
+});
 
 // ---------------------------------------------------------------- input side
 
@@ -83,7 +87,13 @@ const input = config.transport === 'ffmpeg'
   : new RtmpIngest({ host: config.rtmpHost, port: config.rtmpPort, key: config.ingestKey });
 let inputPeer = null;
 
-input.on('publish', (c) => { inputPeer = c.peer; log(`OBS connected (${c.peer})`); maybeStartOutput(); broadcast(); });
+input.on('publish', (c) => {
+  inputPeer = c.peer;
+  log(`OBS connected (${c.peer})`);
+  engine.inputRestart(); // also covers a reconnect that replaced a half-dead connection
+  maybeStartOutput();
+  broadcast();
+});
 input.on('unpublish', () => { inputPeer = null; log('OBS disconnected'); engine.inputRestart(); broadcast(); });
 input.on('tag', (tag) => engine.push(tag));
 input.on('warn', (w) => log(w));
@@ -141,8 +151,7 @@ function maybeStartOutput() {
   sink.on('warn', (w) => log(w));
   sink.on('error', (e) => log(`output error: ${e.message}`));
   sink.on('close', () => {
-    if (out === o) out = null;
-    engine.outputRestart();
+    if (out === o) { out = null; engine.outputRestart(); } // a replaced sink must not touch the live one
     if (shuttingDown || o.ending) return;
     if (!o.connected) outFails++;
     const wait = o.connected ? 1000 : Math.min(30000, 1000 * 2 ** Math.min(outFails, 5));
@@ -171,6 +180,7 @@ engine.on('tag', (tag) => {
   out.sink.send(tag);
   if (out.sink.backlog > MAX_OUTPUT_BACKLOG) {
     log('output is not keeping up (upload too slow?); reconnecting');
+    out.ready = false;
     out.sink.destroy();
   }
 });
@@ -241,8 +251,13 @@ function applyConfig(patch) {
     if (/\s/.test(url)) throw new HttpError(400, 'the stream key has spaces in it; copy it again');
     clean.outputUrl = url;
   }
-  if (typeof clean.outputUrl === 'string' && clean.outputUrl && /^rtmps?:\/\//i.test(clean.outputUrl)) {
-    try { new URL(clean.outputUrl); } catch { throw new HttpError(400, 'outputUrl is not a valid URL'); }
+  if (typeof clean.outputUrl === 'string' && clean.outputUrl) {
+    if (/^rtmps?:\/\//i.test(clean.outputUrl)) {
+      try { new URL(clean.outputUrl); } catch { throw new HttpError(400, 'outputUrl is not a valid URL'); }
+    } else if (!/\.flv$/i.test(clean.outputUrl)) {
+      // Over HTTP only allow an rtmp(s) URL or an .flv recording, never an arbitrary file to overwrite.
+      throw new HttpError(400, 'outputUrl must be an rtmp:// or rtmps:// URL (or a .flv file path)');
+    }
   }
   const errors = cfgm.validate({ ...config, ...clean });
   if (errors.length) throw new HttpError(400, errors.join('; '));
@@ -253,6 +268,7 @@ function applyConfig(patch) {
   cfgm.save(config);
   log.setSecrets(cfgm.secretsOf(config.outputUrl));
   engine.maxDelayMs = config.maxDelaySec * 1000;
+  engine.maxBufferBytes = config.maxBufferMB * 1048576;
   if (engine.delayMs > engine.maxDelayMs) engine.setDelay(engine.maxDelayMs);
   log(`settings saved${restartRequired.length ? ` (restart needed for: ${restartRequired.join(', ')})` : ''}`);
   if (outputChanged) {
@@ -308,10 +324,16 @@ const allowedHosts = new Set([`127.0.0.1:${config.httpPort}`, `localhost:${confi
 // Stream Deck and curl send no Sec-Fetch-Site header; the dock is same-origin.
 function forbidden(req, pathname) {
   if (!allowedHosts.has(req.headers.host)) return true;
-  const site = req.headers['sec-fetch-site'];
   const mutating = req.method !== 'GET' || !READ_ONLY.has(pathname);
-  if (mutating && site && site !== 'same-origin' && site !== 'none') return true;
-  if (mutating && req.headers.origin && !allowedHosts.has(req.headers.origin.replace(/^https?:\/\//, ''))) return true;
+  if (!mutating) return false;
+  const site = req.headers['sec-fetch-site'];
+  if (site && site !== 'same-origin' && site !== 'none') return true;
+  // Older browsers send no Sec-Fetch-Site; they do send Origin / Referer for cross-site requests.
+  for (const h of ['origin', 'referer']) {
+    const v = req.headers[h];
+    if (!v) continue;
+    try { if (!allowedHosts.has(new URL(v).host)) return true; } catch { return true; }
+  }
   return false;
 }
 
@@ -361,6 +383,7 @@ server.on('error', (e) => {
 });
 
 server.listen(config.httpPort, '127.0.0.1', () => {
+  running = true;
   const obsHost = config.rtmpHost === '0.0.0.0' ? '<this PC\'s IP>' : config.rtmpHost;
   log(`InstantDelay ${pkg.version} (${config.transport === 'ffmpeg' ? `ffmpeg transport: ${ffmpeg}` : 'native RTMP'})`);
   if (!config._exists) log(`No ${path.basename(cfgm.FILE)} yet; using defaults. Set your stream key in the dock settings.`);

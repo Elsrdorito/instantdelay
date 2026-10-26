@@ -114,7 +114,7 @@ class FfmpegOutput extends EventEmitter {
     ff.stdin.on('error', () => {});
     ff.stdout.on('data', () => { if (!this.connected) { this.connected = true; this.emit('connected'); } });
     ff.stderr.on('data', (d) => this.emit('warn', `[ffmpeg out] ${d.toString().trim()}`));
-    ff.on('error', (e) => this.emit('error', e));
+    ff.on('error', (e) => { this.ready = false; if (!this.closed) { this.closed = true; this.emit('error', e); this.emit('close'); } });
     ff.on('exit', (code) => {
       this.ready = false;
       if (this.closed) return;

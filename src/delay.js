@@ -38,9 +38,10 @@ class Deque {
 }
 
 class DelayEngine extends EventEmitter {
-  constructor({ delayMs = 0, maxDelayMs = 300000 } = {}) {
+  constructor({ delayMs = 0, maxDelayMs = 300000, maxBufferBytes = 1024 * 1024 * 1024 } = {}) {
     super();
     this.maxDelayMs = maxDelayMs;
+    this.maxBufferBytes = maxBufferBytes; // never hold more than this, whatever the delay says
     this.delayMs = clamp(delayMs, 0, maxDelayMs);
     this.buffer = new Deque();
     this.bufferedBytes = 0;
@@ -126,7 +127,7 @@ class DelayEngine extends EventEmitter {
     const prev = this.delayMs;
     this.delayMs = next;
     this.emit('delay', { from: prev, to: next });
-    this.tick(now);
+    this.tick(now, true);
   }
 
   // Throw away the newest `ms` of buffered content (e.g. something that must not
@@ -149,7 +150,7 @@ class DelayEngine extends EventEmitter {
     this.gen++;
     this.lastInTs = null; // next input tag starts a fresh (monotonic) input timeline
     this.emit('cut', { ms: removedMs, tags: removed });
-    this._arm();
+    this.tick(now, true);
     return removedMs;
   }
 
@@ -189,13 +190,16 @@ class DelayEngine extends EventEmitter {
     if (this.lastOutAny >= 0 && key.gen === this.outGen) this.outOffset = this._offsetAfterSent(key);
   }
 
-  tick(now = Date.now()) {
-    while (this.buffer.length && this.buffer.peek().recv + this.delayMs <= now) {
+  tick(now = Date.now(), rearm = false) {
+    let shifted = false;
+    while (this.buffer.length && (this.buffer.peek().recv + this.delayMs <= now || this.bufferedBytes > this.maxBufferBytes)) {
       const tag = this.buffer.shift();
       this.bufferedBytes -= tag.data.length;
       this._emitTag(tag, now);
+      shifted = true;
     }
-    this._arm();
+    // Re-arm only when the head (or the delay) changed; a push behind a pending timer needs nothing.
+    if (rearm || shifted || !this._timer) this._arm();
   }
 
   _emitTag(tag, now) {
@@ -274,7 +278,8 @@ class DelayEngine extends EventEmitter {
 }
 
 function clamp(v, lo, hi) {
-  return Math.min(hi, Math.max(lo, Number.isFinite(v) ? v : 0));
+  if (Number.isNaN(v)) return lo;
+  return Math.min(hi, Math.max(lo, v)); // +Infinity -> hi (a huge value must not become "no delay")
 }
 
 module.exports = { DelayEngine, Deque };

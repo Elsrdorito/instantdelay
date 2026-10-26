@@ -229,3 +229,19 @@ test('deque keeps order across compaction', () => {
   d.truncate(10);
   assert.deepStrictEqual([...d], [3000, 3001, 3002, 3003, 3004, 3005, 3006, 3007, 3008, 3009]);
 });
+
+test('huge or non-finite delays clamp to the maximum, not to zero', () => {
+  const s = setup({ maxDelayMs: 10000 });
+  s.engine.setDelay(Infinity, 0);
+  assert.strictEqual(s.engine.delayMs, 10000);
+  s.engine.setDelay(NaN, 0);
+  assert.strictEqual(s.engine.delayMs, 0);
+});
+
+test('buffer byte cap releases content early instead of growing forever', () => {
+  const s = setup({ delayMs: 5000, maxBufferBytes: 100 });
+  s.feedHeaders();
+  s.feed(100); // 400 bytes of media would be buffered under a 5s delay
+  assert.ok(s.engine.bufferedBytes <= 100 + 4);
+  assert.ok(s.media().length > 0, 'content released despite the delay');
+});

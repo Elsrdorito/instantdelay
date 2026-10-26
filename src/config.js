@@ -1,6 +1,7 @@
 'use strict';
 // config.json loading, validation, saving and the public (secret-free) view of it.
 const fs = require('fs');
+const net = require('net');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
@@ -9,8 +10,10 @@ const FILE = process.env.INSTANTDELAY_CONFIG || path.join(ROOT, 'config.json');
 const PLACEHOLDER = 'YOUR_TWITCH_STREAM_KEY';
 
 // Keys that can be changed while running, and keys that need a restart.
-const LIVE_KEYS = ['outputUrl', 'presetsSec', 'maxDelaySec', 'initialDelaySec', 'endAfterIdleSec'];
-const RESTART_KEYS = ['rtmpHost', 'rtmpPort', 'ingestKey', 'httpPort', 'transport', 'ffmpegPath'];
+const LIVE_KEYS = ['outputUrl', 'presetsSec', 'maxDelaySec', 'initialDelaySec', 'endAfterIdleSec', 'maxBufferMB'];
+const RESTART_KEYS = ['rtmpHost', 'rtmpPort', 'ingestKey', 'httpPort', 'transport'];
+// Only editable in the file (it names a program to run).
+const FILE_ONLY_KEYS = ['ffmpegPath'];
 
 class ConfigError extends Error {}
 
@@ -44,12 +47,15 @@ function load() {
 // Returns a list of problems with the given (partial) config.
 function validate(c) {
   const errs = [];
-  const num = (k, lo, hi) => {
+  const num = (k, lo, hi, integer = false) => {
     if (!(k in c)) return;
-    if (!Number.isFinite(c[k]) || c[k] < lo || c[k] > hi) errs.push(`"${k}" must be a number between ${lo} and ${hi} (got ${JSON.stringify(c[k])})`);
+    if (!Number.isFinite(c[k]) || c[k] < lo || c[k] > hi || (integer && !Number.isInteger(c[k]))) {
+      errs.push(`"${k}" must be ${integer ? 'a whole' : 'a'} number between ${lo} and ${hi} (got ${JSON.stringify(c[k])})`);
+    }
   };
-  num('rtmpPort', 1, 65535); num('httpPort', 1, 65535);
-  num('maxDelaySec', 1, 3600); num('initialDelaySec', 0, 3600); num('endAfterIdleSec', 0, 86400);
+  num('rtmpPort', 1, 65535, true); num('httpPort', 1, 65535, true);
+  num('maxDelaySec', 1, 3600); num('initialDelaySec', 0, 3600); num('endAfterIdleSec', 0, 86400); num('maxBufferMB', 16, 65536);
+  if ('rtmpHost' in c && !(c.rtmpHost === 'localhost' || net.isIP(c.rtmpHost))) errs.push('"rtmpHost" must be an IP address such as 127.0.0.1 or 0.0.0.0');
   if ('presetsSec' in c && !(Array.isArray(c.presetsSec) && c.presetsSec.length <= 12 && c.presetsSec.every((p) => Number.isFinite(p) && p >= 0 && p <= 3600))) {
     errs.push('"presetsSec" must be a list of up to 12 numbers of seconds');
   }
@@ -106,4 +112,4 @@ function publicView(cfg) {
   return v;
 }
 
-module.exports = { ROOT, FILE, DEFAULTS, LIVE_KEYS, RESTART_KEYS, ConfigError, load, validate, save, outputConfigured, outputUrlFrom, secretsOf, maskUrl, publicView, readJson };
+module.exports = { ROOT, FILE, DEFAULTS, LIVE_KEYS, RESTART_KEYS, FILE_ONLY_KEYS, ConfigError, load, validate, save, outputConfigured, outputUrlFrom, secretsOf, maskUrl, publicView, readJson };

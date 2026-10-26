@@ -12,35 +12,49 @@ const UC = { STREAM_BEGIN: 0, STREAM_EOF: 1, SET_BUFFER_LENGTH: 3, PING_REQUEST:
 const CSID = { CONTROL: 2, COMMAND: 3, AUDIO: 4, DATA: 5, VIDEO: 6, STREAM: 8 };
 
 const DEFAULT_CHUNK_SIZE = 128;
-const MAX_MESSAGE = 16 * 1024 * 1024;
+// A 4K keyframe at a high bitrate is ~1-2 MB; anything bigger is not a media message.
+const MAX_MESSAGE = 8 * 1024 * 1024;
+// Memory a peer can tie up with half-received messages, before any stream-key check.
+const MAX_IN_FLIGHT_MESSAGES = 32;
+const MAX_IN_FLIGHT_BYTES = 32 * 1024 * 1024;
+const HANDSHAKE_BYTES = 1 + 1536 + 1536;
 
 class ChunkReader {
   constructor(onMessage) {
     this.onMessage = onMessage;
     this.chunkSize = DEFAULT_CHUNK_SIZE;
     this.streams = new Map(); // csid -> per-chunk-stream state
-    this.pending = [];        // unparsed input chunks
-    this.pendingBytes = 0;
-    this.bytesIn = 0;
+    this.rest = null;         // unparsed bytes (at most a chunk header)
+    this.cur = null;          // chunk whose payload is still streaming in: { st, remaining }
+    this.bytesIn = HANDSHAKE_BYTES; // acknowledgements count from the start of the connection
+    this.inFlightBytes = 0;
   }
 
   push(data) {
     this.bytesIn += data.length;
-    this.pending.push(data);
-    this.pendingBytes += data.length;
-    let buf = this.pending.length === 1 ? data : Buffer.concat(this.pending, this.pendingBytes);
+    let buf = this.rest ? Buffer.concat([this.rest, data]) : data;
+    this.rest = null;
     let off = 0;
     for (;;) {
-      const used = this._parseChunk(buf, off);
-      if (used === 0) break; // need more data
+      if (this.cur) {
+        // Payload of the current chunk: copy straight into the message, no reassembly buffer.
+        const n = Math.min(this.cur.remaining, buf.length - off);
+        this._payload(this.cur.st, buf, off, n);
+        off += n;
+        this.cur.remaining -= n;
+        if (this.cur.remaining) break;
+        this.cur = null;
+      }
+      const used = this._parseHeader(buf, off);
+      if (used === 0) break; // need more data for the header
       off += used;
     }
-    if (off === buf.length) { this.pending = []; this.pendingBytes = 0; }
-    else { this.pending = [buf.subarray(off)]; this.pendingBytes = buf.length - off; }
+    if (off < buf.length) this.rest = Buffer.from(buf.subarray(off));
   }
 
-  // Parses one chunk at `off`; returns bytes consumed (0 = incomplete).
-  _parseChunk(buf, off) {
+  // Parses one chunk header at `off` and sets up this.cur for its payload.
+  // Returns bytes consumed (0 = incomplete header; nothing is committed).
+  _parseHeader(buf, off) {
     const avail = buf.length - off;
     if (avail < 1) return 0;
     const b0 = buf[off];
@@ -51,17 +65,18 @@ class ChunkReader {
     else if (csid === 1) { if (avail < 3) return 0; csid = 64 + buf[p] + buf[p + 1] * 256; p += 2; }
 
     let st = this.streams.get(csid);
-    if (!st) { st = { ts: 0, delta: 0, len: 0, type: 0, msid: 0, ext: false, buf: null, got: 0 }; this.streams.set(csid, st); }
+    if (!st) {
+      if (this.streams.size >= MAX_IN_FLIGHT_MESSAGES * 4) throw new Error('RTMP: too many chunk streams');
+      st = { csid, ts: 0, delta: 0, len: 0, type: 0, msid: 0, ext: false, buf: null, got: 0 };
+      this.streams.set(csid, st);
+    }
     const hdrLen = [11, 7, 3, 0][fmt];
     if (buf.length - p < hdrLen) return 0;
 
-    // Parse into locals first: a chunk that is not complete yet is parsed again later.
     let { ts, delta, len, type, msid, ext } = st;
-    const starting = st.got === 0;
     if (fmt === 3) {
-      // Extended timestamp is repeated on every chunk of a message that uses it (ffmpeg/librtmp behaviour).
-      if (ext) { if (buf.length - p < 4) return 0; const e = buf.readUInt32BE(p); p += 4; if (starting) delta = e; }
-      if (starting) ts = (ts + delta) >>> 0; // new message with the same header as the last one
+      if (ext) { if (buf.length - p < 4) return 0; const e = buf.readUInt32BE(p); p += 4; if (st.got === 0) delta = e; }
+      if (st.got === 0) ts = (ts + delta) >>> 0; // new message with the same header as the last one
     } else {
       let tsField = buf.readUIntBE(p, 3);
       if (fmt <= 1) { len = buf.readUIntBE(p + 3, 3); type = buf[p + 6]; }
@@ -70,24 +85,46 @@ class ChunkReader {
       ext = tsField === 0xffffff;
       if (ext) { if (buf.length - p < 4) return 0; tsField = buf.readUInt32BE(p); p += 4; }
       if (fmt === 0) { ts = tsField; delta = tsField; } else { delta = tsField; ts = (ts + tsField) >>> 0; }
+      if (st.got) this._abandon(st); // a new header in the middle of a message: the old one is gone
     }
     if (len > MAX_MESSAGE) throw new Error(`RTMP: message too large (${len})`);
-    const want = Math.min(this.chunkSize, len - st.got);
-    if (buf.length - p < want) return 0;
 
     // Commit.
     Object.assign(st, { ts, delta, len, type, msid, ext });
-    if (starting) st.buf = Buffer.allocUnsafe(len);
-    buf.copy(st.buf, st.got, p, p + want);
-    st.got += want;
-    p += want;
-    if (st.got === st.len) {
-      const msg = { csid, type: st.type, msid: st.msid, ts: st.ts, payload: st.buf };
-      st.buf = null; st.got = 0;
-      if (msg.type === MSG.SET_CHUNK_SIZE && msg.payload.length >= 4) this.chunkSize = msg.payload.readUInt32BE(0) & 0x7fffffff;
-      this.onMessage(msg);
+    if (st.got === 0) {
+      if (this.inFlightBytes + len > MAX_IN_FLIGHT_BYTES) throw new Error('RTMP: too much data in flight');
+      let inFlight = 0;
+      for (const s of this.streams.values()) if (s.got) inFlight++;
+      if (inFlight >= MAX_IN_FLIGHT_MESSAGES) throw new Error('RTMP: too many partial messages');
+      st.buf = Buffer.allocUnsafe(len);
+      this.inFlightBytes += len;
     }
+    this.cur = { st, remaining: Math.min(this.chunkSize, st.len - st.got) };
+    if (this.cur.remaining === 0) { this.cur = null; this._payload(st, buf, p, 0); }
     return p - off;
+  }
+
+  _abandon(st) {
+    this.inFlightBytes -= st.len;
+    st.buf = null;
+    st.got = 0;
+  }
+
+  _payload(st, buf, p, n) {
+    if (n) { buf.copy(st.buf, st.got, p, p + n); st.got += n; }
+    if (st.got < st.len) return;
+    const msg = { csid: st.csid, type: st.type, msid: st.msid, ts: st.ts, payload: st.buf };
+    this.inFlightBytes -= st.len;
+    st.buf = null; st.got = 0;
+    if (msg.type === MSG.SET_CHUNK_SIZE && msg.payload.length >= 4) {
+      const size = msg.payload.readUInt32BE(0) & 0x7fffffff;
+      if (size < 1) throw new Error('RTMP: chunk size 0');
+      this.chunkSize = size;
+    } else if (msg.type === MSG.ABORT && msg.payload.length >= 4) {
+      const s = this.streams.get(msg.payload.readUInt32BE(0));
+      if (s && s.got) this._abandon(s);
+    }
+    this.onMessage(msg);
   }
 }
 

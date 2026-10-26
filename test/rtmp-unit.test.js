@@ -69,3 +69,55 @@ test('chunk reader handles fmt 3 new messages (same size, same delta)', () => {
   r.push(Buffer.concat([first2, next, next]));
   assert.deepStrictEqual(got.map((m) => m.ts), [40, 80, 120], 'fmt0 timestamp acts as delta for following fmt3 messages');
 });
+
+test('chunk reader: bogus headers cannot tie up memory, chunk size 0 and giant messages are refused', () => {
+  const r = new ChunkReader(() => {});
+  // 7 MB declared on many chunk streams, one 128-byte chunk each.
+  assert.throws(() => {
+    for (let csid = 3; csid < 60; csid++) r.push(Buffer.concat([Buffer.from([csid, 0, 0, 0, 0x70, 0, 0, 9, 1, 0, 0, 0]), Buffer.alloc(128, 0xaa)]));
+  }, /too (much data|many)/);
+  assert.ok(r.inFlightBytes <= 32 * 1024 * 1024);
+  assert.throws(() => new ChunkReader(() => {}).push(Buffer.from([3, 0, 0, 0, 0xff, 0xff, 0xff, 9, 1, 0, 0, 0, 0xaa])), /too large/);
+  const r2 = new ChunkReader(() => {});
+  assert.throws(() => r2.push(Buffer.from([0x02, 0, 0, 0, 0, 0, 4, 1, 0, 0, 0, 0, 0, 0, 0, 0])), /chunk size 0/);
+});
+
+test('chunk reader: a new header in the middle of a message abandons the old one', () => {
+  const got = [];
+  const r = new ChunkReader((m) => got.push(m));
+  r.chunkSize = 128;
+  // message A: len 200, first 128 bytes
+  r.push(Buffer.concat([Buffer.from([0x04, 0, 0, 0, 0, 0, 200, 8, 1, 0, 0, 0]), Buffer.alloc(128, 1)]));
+  // then a fresh fmt0 header on the same csid: len 2
+  r.push(Buffer.from([0x04, 0, 0, 10, 0, 0, 2, 8, 1, 0, 0, 0, 7, 7]));
+  assert.strictEqual(got.length, 1);
+  assert.strictEqual(got[0].ts, 10);
+  assert.ok(got[0].payload.equals(Buffer.from([7, 7])));
+  assert.strictEqual(r.inFlightBytes, 0);
+});
+
+test('chunk reader: payload streams in without re-buffering (byte-at-a-time)', () => {
+  const w = new ChunkWriter();
+  w.chunkSize = 4096;
+  const got = [];
+  const r = new ChunkReader((m) => got.push(m));
+  r.push(w.encode(2, MSG.SET_CHUNK_SIZE, 0, 0, Buffer.from([0, 0, 0x10, 0])));
+  const payload = Buffer.alloc(10000);
+  for (let i = 0; i < payload.length; i++) payload[i] = i & 0xff;
+  const enc = w.encode(6, MSG.VIDEO, 1, 5, payload);
+  for (let i = 0; i < enc.length; i++) r.push(enc.subarray(i, i + 1));
+  assert.strictEqual(got.length, 2);
+  assert.ok(got[1].payload.equals(payload));
+  assert.strictEqual(r.rest, null);
+});
+
+test('flv describe: composition time only for avc1/hvc1 enhanced packets', () => {
+  const { describe } = require('../src/flv');
+  const av1 = describe(9, 0, Buffer.from([0x91, 0x61, 0x76, 0x30, 0x31, 0x12, 0x00, 0x0a, 0x99, 0x99]));
+  assert.strictEqual(av1.cts, 0);
+  assert.ok(av1.isKey);
+  const hevc = describe(9, 0, Buffer.from([0x91, 0x68, 0x76, 0x63, 0x31, 0x00, 0x00, 0x42, 0x01]));
+  assert.strictEqual(hevc.cts, 0x42);
+  const h264 = describe(9, 0, Buffer.from([0x17, 0x01, 0x00, 0x00, 0x21, 0x01]));
+  assert.strictEqual(h264.cts, 0x21);
+});

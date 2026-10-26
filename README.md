@@ -97,13 +97,14 @@ Everything here can be edited in the dock (⚙). Keys marked ↻ need a restart.
 | `outputUrl` | — | Where to send the stream. Any `rtmp://` or `rtmps://` URL (Twitch, YouTube, Kick…). Default Twitch URL auto-picks a nearby ingest; to choose one yourself see [Twitch's ingest list](https://help.twitch.tv/s/twitch-ingest-recommendation). A file path writes an `.flv` instead. |
 | `presetsSec` | `[0,5,15,30,60,120]` | Buttons in the dock. |
 | `maxDelaySec` | `300` | Largest delay allowed. |
+| `maxBufferMB` | `1024` | Memory cap for the buffer. If the delay would need more, content is released early. |
 | `initialDelaySec` | `0` | Delay when the app starts. |
 | `endAfterIdleSec` | `30` | End the broadcast this long after OBS stops (0 = keep it open). |
 | `rtmpHost` ↻ | `127.0.0.1` | `0.0.0.0` for a two-PC setup where OBS runs on another computer (Windows Firewall will ask). |
 | `ingestKey` ↻ | `""` | If set, OBS must use this stream key. Empty = accept any. Set it when using `0.0.0.0`. |
 | `rtmpPort` ↻ / `httpPort` ↻ | `1935` / `8787` | Ports for OBS and for the dock/API. |
 | `transport` ↻ | `native` | `ffmpeg` uses ffmpeg for RTMP instead of the built-in code (v1 behaviour; needs ffmpeg installed). |
-| `ffmpegPath` ↻ | `ffmpeg` | Only for `transport: ffmpeg`. Use forward slashes: `C:/ffmpeg/bin/ffmpeg.exe`. |
+| `ffmpegPath` ↻ | `ffmpeg` | Only for `transport: ffmpeg`; file-only (not editable from the dock). Use forward slashes: `C:/ffmpeg/bin/ffmpeg.exe`. |
 
 Environment variables override the file: `OUTPUT_URL`, `RTMP_PORT`, `HTTP_PORT`, `END_AFTER_IDLE_SEC`, `TRANSPORT`, `INSTANTDELAY_CONFIG` (path of the config file).
 
@@ -119,7 +120,7 @@ All on `http://127.0.0.1:8787`. Only reachable from this PC; cross-site browser 
 | `GET /api/toggle?sec=N` | Live ↔ N seconds. |
 | `GET /api/cut?sec=N` | Drop the newest N seconds of the buffer. Returns `removedMs`. |
 | `GET /api/config` | Settings without the stream key (`outputMasked`). |
-| `POST /api/config` | JSON body with any settings keys, plus `streamKey` (a key or a full URL). Returns `restartRequired: [...]`. |
+| `POST /api/config` | JSON body with any settings keys except `ffmpegPath`, plus `streamKey` (a key or a full URL). Returns `restartRequired: [...]`. |
 | `GET /api/log?since=SEQ` | Recent log lines. |
 
 ## Known limits

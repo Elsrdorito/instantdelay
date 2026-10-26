@@ -53,7 +53,9 @@ function describe(type, ts, data) {
       const packetType = b0 & 0x0f;
       tag.isKey = ((b0 >> 4) & 0x07) === 1;
       tag.isSeq = packetType === 0;
-      if (packetType === 1 && data.length >= 8) tag.cts = data.readIntBE(5, 3); // CodedFrames
+      // Only avc1/hvc1 CodedFrames carry a composition time; AV1/VP9 frame data starts right after the fourcc.
+      const fourcc = data.length >= 5 ? data.toString('latin1', 1, 5) : '';
+      if (packetType === 1 && data.length >= 8 && (fourcc === 'hvc1' || fourcc === 'avc1')) tag.cts = data.readIntBE(5, 3);
     } else {
       const codec = b0 & 0x0f;
       tag.isKey = (b0 >> 4) === 1;
