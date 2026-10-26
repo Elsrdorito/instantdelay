@@ -26,6 +26,12 @@ const sink = OUTPUT_RTMP ? spawn(FF, ['-hide_banner', '-loglevel', 'error', '-li
 const env = { ...process.env, OUTPUT_URL: OUTPUT_RTMP ? 'rtmp://127.0.0.1:19360/app/sekrit?x=1' : outFile, RTMP_PORT: '19355', HTTP_PORT: '18787', END_AFTER_IDLE_SEC: '2', TRANSPORT, INSTANTDELAY_CONFIG: path.join(tmp, 'config.json') };
 if (TRANSPORT === 'ffmpeg') env.FFMPEG_PATH = FF;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// On Windows some ffmpeg installs (Chocolatey) are shims that start the real ffmpeg as a child; kill the whole tree.
+const killTree = (child) => {
+  if (!child || child.exitCode !== null) return;
+  if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+  else child.kill();
+};
 const get = (p, headers) => fetch(`http://127.0.0.1:18787${p}`, { headers });
 const api = (p) => get(p).then((r) => r.json());
 
@@ -104,7 +110,7 @@ async function run() {
   s = await api('/api/status');
   check(s.presetsSec.join() === '0,10,20' && s.maxDelaySec === 120 && s.inKbps > 100, `status reflects settings and bitrate (${s.inKbps} kbps)`);
 
-  obs.kill();
+  killTree(obs);
   await sleep(3000 + 3000 + 2000 + 1000); // input timeout + drain 3s buffer + idle 2s + margin
   s = await api('/api/status');
   check(!s.inputActive && !s.outputActive, 'output ended after OBS stopped');
@@ -134,10 +140,10 @@ async function verifyFile() {
 run()
   .catch((e) => check(false, `test crashed: ${e.message}`))
   .then(async () => {
-    if (obs) obs.kill();
+    killTree(obs);
     if (server.connected) server.send('shutdown');
     await new Promise((r) => { server.once('exit', r); setTimeout(() => { server.kill(); r(); }, 5000); });
-    if (sink && sink.exitCode === null) await new Promise((r) => { sink.once('exit', r); setTimeout(() => { sink.kill(); r(); }, 5000); });
+    if (sink && sink.exitCode === null) await new Promise((r) => { sink.once('exit', r); setTimeout(() => { killTree(sink); r(); }, 5000); });
     if (fs.existsSync(outFile)) await verifyFile();
     else check(false, 'output file was written');
     console.log(failures.length ? `FAIL (${failures.length})` : 'PASS');
