@@ -63,7 +63,8 @@ function describe(type, ts, data) {
   } else if (type === TAG_AUDIO && data.length >= 2) {
     tag.isSeq = (data[0] >> 4) === 10 && data[1] === 0; // AAC sequence header
   } else if (type === TAG_SCRIPT) {
-    tag.isSeq = true; // onMetaData
+    // onMetaData is codec config (re-sent on output restart); other script data passes through.
+    tag.isSeq = data.length > 13 && data[0] === 2 && data.readUInt16BE(1) === 10 && data.toString('latin1', 3, 13) === 'onMetaData';
   }
   return tag;
 }
@@ -84,4 +85,4 @@ function encodeTag(type, ts, data) {
   return out;
 }
 
-module.exports = { FlvParser, flvHeader, encodeTag, TAG_AUDIO, TAG_VIDEO, TAG_SCRIPT };
+module.exports = { FlvParser, describe, flvHeader, encodeTag, TAG_AUDIO, TAG_VIDEO, TAG_SCRIPT };
