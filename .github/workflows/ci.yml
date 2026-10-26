@@ -1,0 +1,39 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: [18, 22]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Install ffmpeg (for the end-to-end tests)
+        shell: bash
+        run: |
+          case "${{ runner.os }}" in
+            Linux)   sudo apt-get update && sudo apt-get install -y ffmpeg ;;
+            macOS)   brew install ffmpeg ;;
+            Windows) choco install ffmpeg -y --no-progress ;;
+          esac
+      - run: npm run lint
+        shell: bash
+      - run: npm run test:unit
+      - run: npm run test:rtmp
+      - name: End-to-end (native)
+        run: node test/e2e.js
+      - name: End-to-end (native, output over RTMP)
+        shell: bash
+        run: OUTPUT=rtmp node test/e2e.js
+      - name: End-to-end (ffmpeg transport)
+        shell: bash
+        run: TRANSPORT=ffmpeg node test/e2e.js

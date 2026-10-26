@@ -1,3 +1,6 @@
 # Holds your stream key: never commit or share it.
 config.json
+*.flv
 .DS_Store
+Thumbs.db
+node_modules/

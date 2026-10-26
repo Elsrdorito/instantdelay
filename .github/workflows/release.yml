@@ -1,0 +1,25 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  zip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build zip
+        run: |
+          name="InstantDelay-${GITHUB_REF_NAME}"
+          mkdir -p "dist/$name"
+          cp -r src public docs start.bat start.sh change-stream-key.bat config.example.json package.json README.md LICENSE CHANGELOG.md "dist/$name/"
+          # Batch files must have CRLF endings on Windows.
+          sed -i 's/\r$//; s/$/\r/' "dist/$name/start.bat" "dist/$name/change-stream-key.bat"
+          (cd dist && zip -r "$name.zip" "$name")
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
+          generate_release_notes: true

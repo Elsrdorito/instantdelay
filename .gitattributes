@@ -1,2 +1,4 @@
+* text=auto eol=lf
 # Windows batch files need CRLF line endings.
 *.bat text eol=crlf
+*.png binary

@@ -1,5 +1,6 @@
 @echo off
 rem Asks for a new stream key and saves it to config.json.
+rem (You can also change it in the dock: Settings.)
 setlocal
 cd /d "%~dp0"
 set "NODE=node"
