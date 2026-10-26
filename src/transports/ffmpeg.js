@@ -11,6 +11,14 @@ const { FlvParser, flvHeader, encodeTag } = require('../flv');
 
 const IS_WIN = process.platform === 'win32';
 
+// Some Windows installs (e.g. Chocolatey) put a shim on PATH that runs the real ffmpeg
+// as a child process; killing only the shim would leave ffmpeg (and the RTMP port) alive.
+function killTree(child) {
+  if (!child || child.exitCode !== null) return;
+  if (IS_WIN) spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+  else child.kill();
+}
+
 // Find a working ffmpeg. Right after `winget install ffmpeg`, PATH is only
 // updated for newly opened windows, so also look where winget puts it.
 function resolveFfmpeg(configured, root) {
@@ -55,7 +63,7 @@ class FfmpegInput extends EventEmitter {
 
   start() { this._spawn(); setImmediate(() => this.emit('listening')); }
 
-  stop() { this.stopped = true; if (this.ff) this.ff.kill(); }
+  stop() { this.stopped = true; killTree(this.ff); }
 
   _spawn() {
     if (this.stopped) return;
@@ -70,7 +78,7 @@ class FfmpegInput extends EventEmitter {
     let lastErr = '';
     ff.stdout.on('data', (chunk) => {
       if (!connected) { connected = true; this.fails = 0; this.emit('publish', { peer: 'ffmpeg' }); }
-      try { parser.push(chunk); } catch (e) { this.emit('warn', `input parse error: ${e.message}`); ff.kill(); }
+      try { parser.push(chunk); } catch (e) { this.emit('warn', `input parse error: ${e.message}`); killTree(ff); }
     });
     ff.stderr.on('data', (d) => { lastErr = d.toString().trim(); this.emit('warn', `[ffmpeg in] ${lastErr}`); });
     ff.on('error', (e) => this.emit('warn', `cannot start ffmpeg: ${e.message}`));
@@ -128,8 +136,8 @@ class FfmpegOutput extends EventEmitter {
   }
 
   send(tag) { return this.ready ? this.ff.stdin.write(encodeTag(tag.type, tag.ts, tag.data)) : false; }
-  end() { this.ready = false; if (this.ff) { this.ff.stdin.end(); setTimeout(() => this.ff && this.ff.kill(), 5000).unref(); } }
-  destroy() { this.ready = false; if (this.ff) this.ff.kill(); }
+  end() { this.ready = false; if (this.ff) { this.ff.stdin.end(); setTimeout(() => killTree(this.ff), 5000).unref(); } }
+  destroy() { this.ready = false; killTree(this.ff); }
 }
 
 module.exports = { resolveFfmpeg, FfmpegInput, FfmpegOutput };
