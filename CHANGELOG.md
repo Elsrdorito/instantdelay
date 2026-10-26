@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.1 — 2026-10-25
+
+- Windows: the ffmpeg transport now kills the whole ffmpeg process tree (Chocolatey installs a shim that starts the real ffmpeg as a child; killing only the shim left it running and the RTMP port busy).
+- CI runs on Windows too (the lint step was a POSIX shell loop).
+
 ## 2.0.0 — 2026-10-25
 
 **Native RTMP, no more ffmpeg.** InstantDelay now speaks RTMP itself, on both sides.
