@@ -9,7 +9,7 @@
     "test:unit": "node --test test/delay.test.js test/rtmp-unit.test.js",
     "test:rtmp": "node test/rtmp-e2e.js",
     "test:e2e": "node test/e2e.js && OUTPUT=rtmp node test/e2e.js && TRANSPORT=ffmpeg node test/e2e.js",
-    "lint": "for f in src/*.js src/rtmp/*.js src/transports/*.js test/*.js; do node --check $f || exit 1; done"
+    "lint": "node scripts/lint.js"
   },
   "engines": {
     "node": ">=18"
