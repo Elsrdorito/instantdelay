@@ -152,3 +152,80 @@ test('delay is clamped to [0, max]', () => {
   s.engine.setDelay(-5, 0);
   assert.strictEqual(s.engine.delayMs, 0);
 });
+
+test('cut removes the newest content, output resumes on a keyframe and stays continuous', () => {
+  const s = setup({ delayMs: 3000 });
+  s.feedHeaders();
+  s.feed(150); // 5s of content, output has sent ~2s
+  const sentBefore = s.media().length;
+  const removed = s.engine.cut(1000, s.now);
+  assert.ok(removed >= 1000 - FRAME && removed <= 1000 + FRAME, `removed ${removed}ms`);
+  assert.ok(s.engine.buffer.length > 0, 'older content is kept');
+  s.feed(5); // mid-GOP frames right after the hole must not be shown
+  s.feed(100);
+  assert.ok(s.media().length > sentBefore);
+  const firstGen1 = s.out.find((t) => !t.header && t.gen === 1);
+  assert.ok(!firstGen1, 'gen is internal');
+  // The first video frame after the hole is a keyframe.
+  const emitted = s.media();
+  const afterHole = emitted.slice(sentBefore).find((t, i, arr) => i > 0 && t.type === TAG_VIDEO && arr[i - 1].ts < t.ts - FRAME * 2);
+  assert.ok(!afterHole, 'timeline has no jump');
+  assertContinuous(s.out);
+  assert.ok(s.engine.stats.dropped > 0);
+});
+
+test('cut everything, then live content resumes', () => {
+  const s = setup({ delayMs: 2000 });
+  s.feedHeaders();
+  s.feed(60);
+  s.engine.cut(60000, s.now);
+  assert.strictEqual(s.engine.buffer.length, 0);
+  assert.strictEqual(s.engine.bufferedBytes, 0);
+  s.feed(120);
+  assertContinuous(s.out);
+});
+
+test('output restart re-sends the codec config of the content at the output position', () => {
+  const s = setup({ delayMs: 1000 });
+  s.feedHeaders();
+  s.feed(60);
+  // OBS reconnects with new encoder settings while 1s of old content is still buffered.
+  s.engine.inputRestart();
+  s.resetFrames();
+  s.engine.push({ type: TAG_VIDEO, ts: 0, data: Buffer.from([0x17, 0, 0x42]), isKey: true, isSeq: true }, s.now);
+  s.feed(10);
+  s.engine.outputRestart();
+  s.feed(10);
+  const hdr = s.out.filter((t) => t.header && t.type === TAG_VIDEO).at(-1);
+  assert.strictEqual(hdr.data.length, 2, 'old config re-sent while old content plays');
+  s.feed(120);
+  const videoHeaders = s.out.filter((t) => t.header && t.type === TAG_VIDEO);
+  assert.ok(videoHeaders.some((t) => t.data.length === 3), 'new config sent when new content reaches the output');
+  assertContinuous(s.out);
+});
+
+test('status reports buffered bytes and bitrates', () => {
+  const s = setup({ delayMs: 1000 });
+  s.feedHeaders();
+  s.feed(40);
+  const st1 = s.engine.status(s.now);
+  assert.ok(st1.bufferedBytes > 0);
+  s.feed(40);
+  s.engine.status(s.now);
+  s.feed(40);
+  const st2 = s.engine.status(s.now);
+  assert.ok(st2.inKbps > 0, `inKbps ${st2.inKbps}`);
+  assert.ok(st2.bufferedBytes > 0 && st2.bufferedBytes < st1.bufferedBytes + 10000);
+});
+
+test('deque keeps order across compaction', () => {
+  const { Deque } = require('../src/delay');
+  const d = new Deque();
+  for (let i = 0; i < 5000; i++) d.push(i);
+  for (let i = 0; i < 3000; i++) assert.strictEqual(d.shift(), i);
+  assert.strictEqual(d.length, 2000);
+  assert.strictEqual(d.peek(), 3000);
+  assert.strictEqual(d.at(1999), 4999);
+  d.truncate(10);
+  assert.deepStrictEqual([...d], [3000, 3001, 3002, 3003, 3004, 3005, 3006, 3007, 3008, 3009]);
+});
