@@ -5,7 +5,7 @@ Thanks for helping. The project is small on purpose: one Node.js process, no npm
 ## Dev setup
 
 ```bash
-git clone https://github.com/OWNER/instantdelay && cd instantdelay
+git clone https://github.com/Elsrdorito/instantdelay && cd instantdelay
 cp config.example.json config.json      # or: npm run setup
 npm start                               # http://127.0.0.1:8787/dock
 npm test                                # unit + protocol + end-to-end (e2e needs ffmpeg + ffprobe on PATH)
