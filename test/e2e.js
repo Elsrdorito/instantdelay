@@ -67,9 +67,9 @@ async function run() {
   check(s.delayMs === 5000 && s.filling, 'raise to 5s starts filling');
   await sleep(1500);
   s = await api('/api/status');
-  check(s.holding && s.holdKind === 'screen' && s.outputActive && s.outKbps > 0, `delay screen is sent while the delay builds (${s.holdKind}, ${s.outKbps} kb/s)`);
+  check(s.holding && s.holdKind === 'screen' && s.outputActive && s.holdTags > 0, `delay screen is sent while the delay builds (${s.holdKind}, ${s.holdTags} tags, ${s.outKbps} kb/s)`);
   check(s.screen && s.screen.mode === 'screen' && s.screen.width === 640 && s.screen.frameBytes > 1000, `screen encoded for the stream (${JSON.stringify(s.screen)})`);
-  await sleep(5500);
+  await sleep(7000); // fill (5 s from the raise) + up to one keyframe interval (2 s) for the stream to resume
   s = await api('/api/status');
   check(!s.filling && !s.holding && Math.abs(s.bufferedMs - 5000) < 300, `5s delay reached and stream resumed (buffered ${s.bufferedMs}ms)`);
   check(s.holds === 1 && s.holdTags > 100, `one hold with filler tags (${s.holdTags})`);
@@ -83,7 +83,7 @@ async function run() {
   check(up.status === 400, 'a non-PNG upload is rejected');
   s = await api('/api/screen/preview?sec=2');
   check(s.holding, 'screen preview shows the screen to viewers');
-  await sleep(3500);
+  await sleep(4800); // 2 s preview + up to one keyframe interval to resume
   s = await api('/api/status');
   check(!s.holding && s.holds === 2, 'preview ended by itself');
 
