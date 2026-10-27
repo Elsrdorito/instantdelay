@@ -88,7 +88,8 @@ async function run() {
   check(!s.holding && s.holds === 2, 'preview ended by itself');
 
   s = await api('/api/clip?sec=4');
-  check(s.file && s.ms > 3000 && s.ms < 5000 && s.bytes > 50000, `clip of the last 4s saved (${s.file}, ${s.ms}ms, ${s.bytes} bytes)`);
+  // Starts on the keyframe before the window, so 4 s requested = 4 s to 4 s + one GOP (2 s).
+  check(s.file && s.ms >= 3900 && s.ms < 7000 && s.bytes > 50000, `clip of the last 4s saved (${s.file}, ${s.ms}ms, ${s.bytes} bytes)`);
   await sleep(500);
   const clipFile = path.join(tmp, 'clips', path.basename(s.file));
   check(fs.existsSync(clipFile), 'clip file exists in the configured folder');
@@ -169,13 +170,16 @@ async function verifyFile() {
   for (let i = 1; i < vids.length; i++) { const g = vids[i] - vids[i - 1]; if (g < 0) backwards++; maxGap = Math.max(maxGap, g); }
   // -copyts + passthrough: keep the file's own timestamps, so any frame displayed out of order
   // (e.g. at a delay cut) is reported, without false alarms from frame-rate rounding.
-  const decode = spawnSync(FF, ['-v', 'error', '-copyts', '-i', outFile, '-fps_mode', 'passthrough', '-f', 'null', '-'], { encoding: 'utf8' });
+  // -enc_time_base 1/1000: keep FLV's millisecond timebase for the null muxer's checks; otherwise ffmpeg guesses a
+  // frame rate from the first packets (10 fps if the file opens with a delay screen) and reports false dts collisions.
+  const decode = spawnSync(FF, ['-v', 'error', '-copyts', '-i', outFile, '-fps_mode', 'passthrough', '-enc_time_base', '1/1000', '-f', 'null', '-'], { encoding: 'utf8' });
   const errors = (probe.stderr + decode.stderr).trim();
   console.log(`RESULT video packets=${vids.length} duration=${(vids.at(-1) || 0).toFixed(2)}s maxDtsGap=${maxGap.toFixed(3)}s backwards=${backwards}`);
   check(vids.length > 300, 'output has enough video');
   // Delay screens run at 10 fps, so holds add few packets; the cut and the instant jump remove many.
   check(vids.length < 900, `output skipped the cut and the instant jump (${vids.length} packets)`);
-  check(backwards === 0 && maxGap < 0.2, `output timeline is continuous (max gap ${maxGap.toFixed(3)}s, backwards ${backwards})`);
+  // A splice after B-frames sits (reorder depth + 34 ms) after the last decoded frame: up to ~0.24 s with bf=3.
+  check(backwards === 0 && maxGap < 0.25, `output timeline is continuous (max gap ${maxGap.toFixed(3)}s, backwards ${backwards})`);
   check(!errors, `output (x264 + delay screens spliced in) decodes cleanly${errors ? `: ${errors.split('\n')[0]}` : ''}`);
   const recDir = path.join(tmp, 'recordings');
   const recs = fs.existsSync(recDir) ? fs.readdirSync(recDir).filter((f) => f.endsWith('.flv')) : [];

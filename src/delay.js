@@ -20,7 +20,9 @@
 const { EventEmitter } = require('events');
 const { TAG_VIDEO, TAG_AUDIO, TAG_SCRIPT } = require('./flv');
 
-const FRAME_GAP_MS = 33;
+// Spacing used when splicing (resume after a jump/cut/hold). 34 rather than 33 so two
+// frames never round to the same tick in a 1/30 s timebase (players and ffmpeg warn on that).
+const FRAME_GAP_MS = 34;
 
 // Array-backed FIFO with O(1) shift. Up to 300s of audio+video is ~25k tags;
 // Array.prototype.shift() would move all of them on every released tag.
@@ -184,10 +186,13 @@ class DelayEngine extends EventEmitter {
   // from 0. Returns { tags, ms, bytes } or null when there is nothing.
   clip(ms, now = Date.now()) {
     const from = now - ms;
-    const all = [];
-    for (const t of this.replay) if (t.recv >= from) all.push(t);
-    for (const t of this.buffer) if (t.recv >= from) all.push(t);
-    const start = all.findIndex((t) => t.type === TAG_VIDEO && t.isKey && !t.isSeq);
+    const all = [...this.replay, ...this.buffer];
+    const isKey = (t) => t.type === TAG_VIDEO && t.isKey && !t.isSeq;
+    // Start on the last keyframe at or before the window start, so the clip covers the whole
+    // requested span (it ends up at most one GOP longer); fall back to the first one after it.
+    let start = -1;
+    for (let i = 0; i < all.length && all[i].recv <= from; i++) if (isKey(all[i])) start = i;
+    if (start < 0) start = all.findIndex((t) => t.recv >= from && isKey(t));
     if (start < 0) return null;
     // Codec config in force at the start: the last sequence headers before it (or the output's).
     const headers = new Map(this.headers);
@@ -268,6 +273,8 @@ class DelayEngine extends EventEmitter {
 
   // ---- hold: filler while the real output is paused
 
+  // Needs something real to have gone out once, so the hold's timeline has a base; if the delay is
+  // raised while a fresh output still waits for its first keyframe, the broadcast simply opens with the screen.
   _canHold() {
     return this.keepAlive && !!this.holdSource && this.lastOutAny >= 0;
   }

@@ -164,6 +164,22 @@ test('going back to live during a hold ends it cleanly', () => {
   assertMonotonic(s.out);
 });
 
+test('a raise while a fresh output still waits for its keyframe opens with the screen, then the real stream', () => {
+  const s = setup();
+  s.feedHeaders();
+  s.feed(33);
+  s.engine.outputRestart(); // mid-GOP: the next keyframe is frame 40
+  s.feed(3);
+  s.engine.setDelay(5000, s.now);
+  s.feed(30 * 6);
+  assert.strictEqual(s.engine.stats.holds, 1);
+  const afterRestart = s.out.filter((t) => !t.header && t.ts > 33 * 33);
+  assert.ok(afterRestart[0].hold && afterRestart[0].isKey, 'the screen keyframe comes first');
+  const firstReal = afterRestart.find((t) => !t.hold);
+  assert.ok(firstReal && firstReal.type === TAG_VIDEO && firstReal.isKey, 'then the real stream on its keyframe');
+  assertMonotonic(s.out);
+});
+
 test('a new output session cancels the hold state', () => {
   const s = setup();
   s.feedHeaders();
