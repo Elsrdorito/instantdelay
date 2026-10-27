@@ -8,6 +8,10 @@
 //  - Raising the delay  -> output pauses while the buffer fills up.
 //  - cut(ms)            -> throw away the newest `ms` of buffered content (the
 //                          output pauses that long once it reaches the hole).
+//  - hold               -> whenever the output would pause for a while (fill,
+//                          cut hole, OBS gone), `holdSource` provides filler
+//                          (delay screen + silence) so the ingest stays alive.
+//                          The real stream resumes on its next keyframe.
 //
 // Everything is driven by `now` so it can be unit-tested with a fake clock.
 // Call start() to let the engine arm its own timers (one timeout for the next
@@ -63,22 +67,42 @@ class DelayEngine extends EventEmitter {
     this.lastVideoPts = -1; // display time of the latest-shown frame (B-frames display out of order)
     this.needKeyframe = true;
     this.headersSent = false;
-    this.stats = { inTags: 0, outTags: 0, dropped: 0, inBytes: 0, outBytes: 0, lastInAt: 0, lastOutAt: 0 };
+    this.stats = { inTags: 0, outTags: 0, dropped: 0, inBytes: 0, outBytes: 0, lastInAt: 0, lastOutAt: 0, holdTags: 0, holds: 0 };
     this._rate = { at: 0, inBytes: 0, outBytes: 0, inKbps: 0, outKbps: 0 };
     this._timer = null;
     this._auto = false;
+    // Hold (keep-alive filler). The server sets `keepAlive` while an output is connected.
+    this.holdSource = null; // { session({ headers, lastKeyframe }) -> { kind, videoIntervalMs, audioIntervalMs, videoTags(k), audioTag() } | null }
+    this.keepAlive = false;
+    this.holdMinGapMs = 1500; // a pause shorter than this is not worth a resync on the next keyframe
+    this.holdAfterIdleMs = 1000; // with nothing buffered (OBS gone), hold after this much silence
+    this.hold = null;
+    this.holdUntil = 0; // previewHold(): keep holding (and skip due content) until this time
+    this.lastRealOutAt = 0;
+    this.lastKeyframe = null; // data of the last real video keyframe sent (for the freeze fallback)
+    // Replay window: content that already left the buffer, kept `replayMs` for "save a clip".
+    this.replayMs = 0;
+    this.replay = new Deque();
+    this.replayBytes = 0;
   }
 
   // Let the engine release due tags on its own (real clock).
   start() { this._auto = true; this._arm(); }
-  stop() { this._auto = false; clearTimeout(this._timer); this._timer = null; }
+  stop() { this._auto = false; clearTimeout(this._timer); this._timer = null; this.hold = null; }
 
   _arm() {
     if (!this._auto) return;
     clearTimeout(this._timer);
     this._timer = null;
-    if (!this.buffer.length) return;
-    const wait = this.buffer.peek().recv + this.delayMs - Date.now();
+    const now = Date.now();
+    let wait = this.buffer.length ? this.buffer.peek().recv + this.delayMs - now : Infinity;
+    if (this.hold) {
+      wait = Math.min(wait, this.hold.nextVideoAt - now);
+      if (this.hold.session.audioIntervalMs) wait = Math.min(wait, this.hold.nextAudioAt - now);
+    } else if (this._canHold() && !this.buffer.length && this.lastRealOutAt) {
+      wait = Math.min(wait, this.lastRealOutAt + this.holdAfterIdleMs - now);
+    }
+    if (wait === Infinity) return;
     this._timer = setTimeout(() => { this._timer = null; this.tick(); }, Math.max(0, wait));
   }
 
@@ -90,6 +114,7 @@ class DelayEngine extends EventEmitter {
   outputRestart(newSession = false) {
     this.headersSent = false;
     this.needKeyframe = true;
+    this.hold = null;
     if (newSession) {
       this.lastOutTs = { [TAG_AUDIO]: -1, [TAG_VIDEO]: -1, [TAG_SCRIPT]: -1 };
       this.lastOutAny = -1;
@@ -154,6 +179,35 @@ class DelayEngine extends EventEmitter {
     return removedMs;
   }
 
+  // The last `ms` of what OBS sent (replay window + buffer), as tags ready to be
+  // written to a file: codec headers first, starting on a keyframe, timestamps
+  // from 0. Returns { tags, ms, bytes } or null when there is nothing.
+  clip(ms, now = Date.now()) {
+    const from = now - ms;
+    const all = [];
+    for (const t of this.replay) if (t.recv >= from) all.push(t);
+    for (const t of this.buffer) if (t.recv >= from) all.push(t);
+    const start = all.findIndex((t) => t.type === TAG_VIDEO && t.isKey && !t.isSeq);
+    if (start < 0) return null;
+    // Codec config in force at the start: the last sequence headers before it (or the output's).
+    const headers = new Map(this.headers);
+    for (let i = 0; i < start; i++) if (all[i].isSeq) headers.set(all[i].type, all[i].data);
+    const tags = [];
+    const base = all[start].ts;
+    let bytes = 0;
+    for (const type of [TAG_SCRIPT, TAG_VIDEO, TAG_AUDIO]) if (headers.has(type)) { tags.push({ type, ts: 0, data: headers.get(type) }); bytes += headers.get(type).length; }
+    const last = { [TAG_AUDIO]: 0, [TAG_VIDEO]: 0, [TAG_SCRIPT]: 0 };
+    for (let i = start; i < all.length; i++) {
+      const t = all[i];
+      let ts = Math.max(0, t.ts - base);
+      if (ts < last[t.type]) ts = last[t.type];
+      last[t.type] = ts;
+      tags.push({ type: t.type, ts, data: t.data });
+      bytes += t.data.length;
+    }
+    return { tags, ms: now - all[start].recv, bytes };
+  }
+
   // Drop buffered content so that what is due under the new (smaller) delay
   // starts on a keyframe.
   _skipForward(newDelay, now) {
@@ -195,11 +249,91 @@ class DelayEngine extends EventEmitter {
     while (this.buffer.length && (this.buffer.peek().recv + this.delayMs <= now || this.bufferedBytes > this.maxBufferBytes)) {
       const tag = this.buffer.shift();
       this.bufferedBytes -= tag.data.length;
-      this._emitTag(tag, now);
+      if (this.hold && now < this.holdUntil) { if (!tag.isSeq) this.stats.dropped++; else this.headers.set(tag.type, tag.data); } // preview: skip what is due
+      else this._emitTag(tag, now);
+      if (this.replayMs > 0) { this.replay.push(tag); this.replayBytes += tag.data.length; }
       shifted = true;
     }
+    while (this.replay.length && (this.replay.peek().recv < now - this.replayMs || this.replayMs <= 0)) this.replayBytes -= this.replay.shift().data.length;
+    if (!this.hold && this._canHold()) {
+      // Known pause ahead (fill or cut hole), or nothing buffered and the output has gone quiet (OBS gone).
+      const gap = this.buffer.length ? this.buffer.peek().recv + this.delayMs - now
+        : (this.lastRealOutAt && now - this.lastRealOutAt >= this.holdAfterIdleMs ? Infinity : -1);
+      if (gap >= this.holdMinGapMs) this._startHold(now);
+    }
+    if (this.hold) this._holdTick(now);
     // Re-arm only when the head (or the delay) changed; a push behind a pending timer needs nothing.
-    if (rearm || shifted || !this._timer) this._arm();
+    if (rearm || shifted || this.hold || !this._timer) this._arm();
+  }
+
+  // ---- hold: filler while the real output is paused
+
+  _canHold() {
+    return this.keepAlive && !!this.holdSource && this.lastOutAny >= 0;
+  }
+
+  // Show the hold (delay screen) to viewers for `ms`, skipping that much content:
+  // lets the streamer check what viewers will see. Returns false if a hold is not possible.
+  previewHold(ms, now = Date.now()) {
+    if (!this._canHold()) return false;
+    if (!this.hold) this._startHold(now);
+    if (!this.hold) return false;
+    this.holdUntil = now + ms;
+    this.tick(now, true);
+    return true;
+  }
+
+  _startHold(now) {
+    let session = null;
+    try { session = this.holdSource.session({ headers: this.headers, lastKeyframe: this.lastKeyframe }); } catch (e) { this.emit('warn', `hold failed: ${e.message}`); }
+    if (!session) { this.lastRealOutAt = 0; return; } // nothing to send; don't retry every tick
+    const base = Math.max(this.lastOutAny, this.lastVideoPts) + FRAME_GAP_MS;
+    this.hold = {
+      session, since: now, videoK: 0,
+      nextVideoAt: now, videoTs: base,
+      nextAudioAt: now, audioTs: this.lastOutTs[TAG_AUDIO] >= 0 ? this.lastOutTs[TAG_AUDIO] + session.audioIntervalMs : base,
+    };
+    this.stats.holds++;
+    // The real stream will have to restart on a keyframe, with its own headers.
+    this.needKeyframe = true;
+    this.headersSent = false;
+    this.emit('hold', { kind: session.kind });
+  }
+
+  _holdTick(now) {
+    const h = this.hold;
+    const s = h.session;
+    while (h.nextVideoAt <= now) {
+      for (const t of s.videoTags(h.videoK)) this._sendHold(t, Math.round(h.videoTs), now);
+      h.videoK++;
+      h.nextVideoAt += s.videoIntervalMs;
+      h.videoTs += s.videoIntervalMs;
+    }
+    if (s.audioIntervalMs) {
+      while (h.nextAudioAt <= now) {
+        this._sendHold(s.audioTag(), Math.round(h.audioTs), now);
+        h.nextAudioAt += s.audioIntervalMs;
+        h.audioTs += s.audioIntervalMs;
+      }
+    }
+  }
+
+  _sendHold(tag, ts, now) {
+    if (ts < this.lastOutTs[tag.type]) ts = this.lastOutTs[tag.type];
+    this.lastOutTs[tag.type] = ts;
+    if (!tag.header) {
+      this.lastOutAny = Math.max(this.lastOutAny, ts);
+      if (tag.type === TAG_VIDEO) this.lastVideoPts = Math.max(this.lastVideoPts, ts);
+    }
+    this.stats.holdTags++;
+    this._send({ type: tag.type, ts, data: tag.data, header: !!tag.header, isKey: !!tag.isKey, hold: true }, now);
+  }
+
+  // Called right before the real stream's keyframe goes out again.
+  _endHold(now) {
+    const ms = now - this.hold.since;
+    this.hold = null;
+    this.emit('holdEnd', { ms });
   }
 
   _emitTag(tag, now) {
@@ -208,6 +342,7 @@ class DelayEngine extends EventEmitter {
       // Remember codec config seen while waiting; it is sent right before the keyframe.
       if (tag.isSeq) { this.headers.set(tag.type, tag.data); return; }
       if (!(tag.type === TAG_VIDEO && tag.isKey)) { this.stats.dropped++; return; }
+      if (this.hold) this._endHold(now);
       if (this.lastOutAny >= 0) this.outOffset = this._offsetAfterSent(tag);
       else this.outOffset = -tag.ts; // first frame ever starts at 0
       this.needKeyframe = false;
@@ -237,6 +372,10 @@ class DelayEngine extends EventEmitter {
     this.stats.outTags++;
     this.stats.outBytes += out.data.length;
     this.stats.lastOutAt = now;
+    if (!out.hold) {
+      this.lastRealOutAt = now;
+      if (out.type === TAG_VIDEO && out.isKey && !out.header) this.lastKeyframe = out.data;
+    }
     this.emit('tag', out);
   }
 
@@ -272,6 +411,9 @@ class DelayEngine extends EventEmitter {
       bufferedBytes: this.bufferedBytes,
       inKbps: live ? r.inKbps : 0,
       outKbps: now - this.stats.lastOutAt < 3000 ? r.outKbps : 0,
+      holding: !!this.hold,
+      holdKind: this.hold ? this.hold.session.kind : null,
+      holdMs: this.hold ? now - this.hold.since : 0,
       ...this.stats,
     };
   }

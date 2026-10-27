@@ -22,11 +22,25 @@ A wall-clock buffer. Each tag is stamped with its arrival time; it is released o
 - **Buffer** is a deque (array + head index): O(1) push/shift. 300 s of audio+video is ~25k tags; `Array.shift` would move all of them per released tag.
 - **Timing**: `start()` arms one `setTimeout` for the next due tag. No polling; nothing runs while the buffer is empty.
 - **Lowering the delay** (`setDelay` to a smaller value): drop buffered tags up to the latest keyframe that is already due under the new delay, so the output continues on a keyframe. Audio before that keyframe is dropped too. Codec-config tags are never dropped.
-- **Raising the delay**: nothing is released until the buffer holds `delayMs`; viewers see a freeze.
+- **Raising the delay**: nothing real is released until the buffer holds `delayMs`; the *hold* (below) fills the gap for viewers.
 - **Cut** (`cut(ms)`): truncate the newest `ms` from the tail and bump the *generation*. Every tag carries the generation it was received in; when the output crosses a generation boundary it waits for a keyframe and re-bases timestamps. The same mechanism handles any future "hole" we might create.
 - **Output timeline**: timestamps are rewritten so the published stream is one continuous, monotonic timeline across delay changes, cuts, OBS reconnects (input timestamps restart at 0) and output reconnects. `_offsetAfterSent` places the next keyframe after the last *displayed* frame (`lastVideoPts`, which accounts for B-frame reordering), not just the last decoded one; this was a real bug in v1.
 - **Codec headers**: the engine remembers the latest sequence headers *as they pass the output position*, so an output reconnect replays the config that matches the content being sent, even if OBS changed encoders while older content was still buffered.
 - **Stats**: in/out bytes and tags, dropped tags, buffered bytes, 1-second bitrates.
+- **Hold** (the keep-alive): whenever the next real tag is ≥ 1.5 s away (fill, cut hole) or nothing has gone out for 1 s with an empty buffer (OBS gone), the engine asks its `holdSource` for a session and emits its tags on a timer: video every 100 ms, audio every AAC frame (21.3 ms at 48 kHz). Timestamps continue from the last real frame (`lastOutAny`/`lastVideoPts`), so the resume is seamless. A hold ends when the next real keyframe is due: `needKeyframe` and `headersSent` were reset at hold start, so the real stream re-sends its own codec headers and restarts on a keyframe (≤ one GOP of content is skipped). `previewHold(ms)` forces a hold and skips due content meanwhile, so the streamer can rehearse the screen. Only the server knows whether an output is connected; it toggles `engine.keepAlive`.
+- **Replay window** (`replayMs`): tags that left the buffer are kept this long so `clip(ms)` can return the last N seconds (replay + buffer) starting on a keyframe with headers first and timestamps from 0.
+
+## The delay screen (`src/filler.js`, `src/h264.js`, `src/screen.js`, `src/png.js`)
+
+The hold source. Twitch drops a publisher after ~30 s without data, so pausing is not an option; and the "no re-encoding" rule still stands for the stream itself. The trick: the picture is encoded **as part of the running stream**.
+
+- `h264.js` parses the stream's SPS out of the AVC sequence header OBS sent, and writes one extra **PPS** (CAVLC, deblocking on, a free `pps_id`) that refers to that SPS. Our pictures use that PPS; OBS's frames keep using theirs. We never have to match CABAC, 8x8 transforms or B-frame settings. The new sequence header (avcC with both PPS) goes out before the first picture; the PPS is also sent in-band inside the IDR access unit, for ingests that ignore repeated sequence headers.
+- The **IDR picture** is Intra_16x16 only (V/H/DC/plane prediction chosen by SAD), 4x4 integer transform, the standard quantizer (QP 22), luma-DC Hadamard, chroma DC 2x2, CAVLC residuals with the standard VLC tables. Macroblocks whose levels would not fit the `level_prefix 15` escape are written as I_PCM (lossless, 384 bytes) instead. The reconstruction loop mirrors the decoder exactly; the tests compare it byte for byte against ffmpeg with deblocking off.
+- Between keyframes, **P pictures with `mb_skip_run = all`** (~10 bytes) repeat the picture at 10 fps; an IDR every 2 s keeps Twitch's keyframe rule. `frame_num`/POC follow the SPS (POC types 0 and 2 are supported; 1 is not used by any OBS encoder).
+- Supported: 4:2:0, 8-bit, progressive, no custom scaling matrices (everything OBS sends to Twitch). Otherwise `HoldSource` falls back to repeating the last real keyframe.
+- Audio: fixed AAC-LC silence frames (mono/stereo), sample-rate independent; the FLV audio header byte is copied from the stream's own sequence header.
+- `screen.js` letterboxes the PNG into the visible area (never stretched; bars take the average edge colour), replicates edges into the cropped margin, converts to limited-range BT.709 (≥ 720 lines) or BT.601. `png.js` decodes any non-interlaced PNG with Node's zlib.
+- Cost: ~20 KB per keyframe at 1080p for the built-in screen (≈ 90 kb/s while shown), ~150 ms to encode, once per stream (cached per sequence header).
 
 ## RTMP (`src/rtmp/`)
 
@@ -53,6 +67,10 @@ v1 ran two ffmpeg processes (`-listen 1` to receive, `-f flv -i pipe:0` to send)
 ## Tests
 
 - `test/delay.test.js`: engine with a fake clock (continuity, keyframe alignment, B-frame display order, reconnects, cut, header replay, deque).
+- `test/hold.test.js`: the hold with a fake hold source: fill, short raise (no hold), cut hole, OBS gone, back to live mid-hold, output restart.
+- `test/h264.test.js`: SPS parsing of real x264 headers; bit-exact decode against ffmpeg for Baseline/Main/High, 720p/1080p (with cropping), POC types 0 and 2, deblocking on/off, I_PCM fallback; and a splice of our pictures into a real CABAC/B-frame x264 stream.
+- `test/png.test.js`: every colour type/bit depth/filter, via a tiny in-test PNG encoder.
+- `test/obsws.test.js`: the obs-websocket client against a fake server (auth, scene events, reconnect). Needs Node 22.
 - `test/rtmp-unit.test.js`: AMF0 round trips, chunk reader/writer round trips including extended timestamps and dribbled input.
 - `test/rtmp-e2e.js`: ffmpeg publishes into `RtmpIngest`; `RtmpPublisher` publishes into `ffmpeg -listen`; and publisher → ingest directly.
 - `test/e2e.js`: the whole server with a fake OBS (ffmpeg test pattern). Changes the delay, cuts, checks the API guards and the settings API, stops "OBS", then verifies the output file is continuous and decodes cleanly. Runs in three modes: file output, RTMP output into `ffmpeg -listen`, and `transport: ffmpeg`.

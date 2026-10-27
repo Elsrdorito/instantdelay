@@ -24,6 +24,8 @@ const outFile = path.join(tmp, 'out.flv');
 const sink = OUTPUT_RTMP ? spawn(FF, ['-hide_banner', '-loglevel', 'error', '-listen', '1', '-i', 'rtmp://127.0.0.1:19360/app/sekrit?x=1',
   '-c', 'copy', '-f', 'flv', '-y', outFile], { stdio: 'inherit' }) : null;
 const env = { ...process.env, OUTPUT_URL: OUTPUT_RTMP ? 'rtmp://127.0.0.1:19360/app/sekrit?x=1' : outFile, RTMP_PORT: '19355', HTTP_PORT: '18787', END_AFTER_IDLE_SEC: '2', TRANSPORT, INSTANTDELAY_CONFIG: path.join(tmp, 'config.json') };
+// Clips and the recording go to the temp folder (absolute paths are allowed in the file, not over HTTP).
+fs.writeFileSync(path.join(tmp, 'config.json'), JSON.stringify({ clipSec: 30, clipDir: path.join(tmp, 'clips'), recordDir: path.join(tmp, 'recordings') }));
 if (TRANSPORT === 'ffmpeg') env.FFMPEG_PATH = FF;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // On Windows some ffmpeg installs (Chocolatey) are shims that start the real ffmpeg as a child; kill the whole tree.
@@ -63,9 +65,37 @@ async function run() {
 
   s = await api('/api/delay?sec=5');
   check(s.delayMs === 5000 && s.filling, 'raise to 5s starts filling');
-  await sleep(7000);
+  await sleep(1500);
   s = await api('/api/status');
-  check(!s.filling && Math.abs(s.bufferedMs - 5000) < 300, `5s delay reached (buffered ${s.bufferedMs}ms)`);
+  check(s.holding && s.holdKind === 'screen' && s.outputActive && s.outKbps > 0, `delay screen is sent while the delay builds (${s.holdKind}, ${s.outKbps} kb/s)`);
+  check(s.screen && s.screen.mode === 'screen' && s.screen.width === 640 && s.screen.frameBytes > 1000, `screen encoded for the stream (${JSON.stringify(s.screen)})`);
+  await sleep(5500);
+  s = await api('/api/status');
+  check(!s.filling && !s.holding && Math.abs(s.bufferedMs - 5000) < 300, `5s delay reached and stream resumed (buffered ${s.bufferedMs}ms)`);
+  check(s.holds === 1 && s.holdTags > 100, `one hold with filler tags (${s.holdTags})`);
+
+  const png = await get('/api/screen.png');
+  check(png.status === 200 && png.headers.get('content-type') === 'image/png', 'screen preview is served');
+  let up = await fetch('http://127.0.0.1:18787/api/screen', { method: 'POST', headers: { 'Content-Type': 'image/png' }, body: fs.readFileSync(path.join(__dirname, '../public/screen.png')) });
+  let uj = await up.json();
+  check(up.status === 200 && uj.config.delayScreen === 'screens/custom.png' && fs.existsSync(path.join(__dirname, '../screens/custom.png')), 'custom screen upload is saved and selected');
+  up = await fetch('http://127.0.0.1:18787/api/screen', { method: 'POST', headers: { 'Content-Type': 'image/png' }, body: Buffer.from('nope') });
+  check(up.status === 400, 'a non-PNG upload is rejected');
+  s = await api('/api/screen/preview?sec=2');
+  check(s.holding, 'screen preview shows the screen to viewers');
+  await sleep(3500);
+  s = await api('/api/status');
+  check(!s.holding && s.holds === 2, 'preview ended by itself');
+
+  s = await api('/api/clip?sec=4');
+  check(s.file && s.ms > 3000 && s.ms < 5000 && s.bytes > 50000, `clip of the last 4s saved (${s.file}, ${s.ms}ms, ${s.bytes} bytes)`);
+  await sleep(500);
+  const clipFile = path.join(tmp, 'clips', path.basename(s.file));
+  check(fs.existsSync(clipFile), 'clip file exists in the configured folder');
+  const clipProbe = spawnSync(FF, ['-v', 'error', '-i', clipFile, '-f', 'null', '-'], { encoding: 'utf8' });
+  check(clipProbe.status === 0 && !clipProbe.stderr.trim(), `clip decodes cleanly${clipProbe.stderr ? ': ' + clipProbe.stderr.split('\n')[0] : ''}`);
+  const scenes = await get('/api/scenes');
+  check(scenes.status === 400, 'scenes endpoint reports OBS WebSocket as not configured');
 
   const bad = await get('/api/delay?sec=abc');
   s = await api('/api/status');
@@ -100,6 +130,17 @@ async function run() {
   check(r.status === 200 && j.config.presetsSec.join() === '0,10,20' && j.restartRequired.length === 0, 'settings can be changed live');
   r = await post({ maxDelaySec: 'nope' });
   check(r.status === 400, 'bad settings are rejected');
+  r = await post({ delayScreen: '../../etc/passwd.png' });
+  check(r.status === 400, 'arbitrary screen paths are rejected over HTTP');
+  r = await post({ webhookUrl: 'ftp://nope' });
+  check(r.status === 400, 'bad webhook URL is rejected');
+  r = await post({ sceneDelays: { Gameplay: 30, Chat: 0 }, obsWsUrl: '' });
+  j = await r.json();
+  check(r.status === 200 && j.config.sceneDelays.Gameplay === 30, 'scene rules are saved');
+  r = await post({ delayScreen: 'default', bandwidthTest: false });
+  j = await r.json();
+  check(r.status === 200 && j.config.delayScreen === 'default', 'screen set back to the built-in one');
+  check(!('obsWsPassword' in j.config) && !('outputUrlBackup' in j.config) && 'obsWsPasswordSet' in j.config, 'config view hides the OBS password and backup key');
   r = await post({ presetsSec: [0, 5] }, { 'Sec-Fetch-Site': 'cross-site' });
   check(r.status === 403, 'cross-site settings change is blocked');
   r = await post({ rtmpPort: 19399 });
@@ -132,9 +173,13 @@ async function verifyFile() {
   const errors = (probe.stderr + decode.stderr).trim();
   console.log(`RESULT video packets=${vids.length} duration=${(vids.at(-1) || 0).toFixed(2)}s maxDtsGap=${maxGap.toFixed(3)}s backwards=${backwards}`);
   check(vids.length > 300, 'output has enough video');
-  check(vids.length < 700, `output skipped the cut and the instant jump (${vids.length} packets)`);
-  check(backwards === 0 && maxGap < 0.2, 'output timeline is continuous');
-  check(!errors, `output decodes cleanly${errors ? `: ${errors.split('\n')[0]}` : ''}`);
+  // Delay screens run at 10 fps, so holds add few packets; the cut and the instant jump remove many.
+  check(vids.length < 900, `output skipped the cut and the instant jump (${vids.length} packets)`);
+  check(backwards === 0 && maxGap < 0.2, `output timeline is continuous (max gap ${maxGap.toFixed(3)}s, backwards ${backwards})`);
+  check(!errors, `output (x264 + delay screens spliced in) decodes cleanly${errors ? `: ${errors.split('\n')[0]}` : ''}`);
+  const recDir = path.join(tmp, 'recordings');
+  const recs = fs.existsSync(recDir) ? fs.readdirSync(recDir).filter((f) => f.endsWith('.flv')) : [];
+  check(recs.length >= 1 && fs.statSync(path.join(recDir, recs[0])).size > 100000, `recording of the broadcast was written (${recs.join(', ')})`);
 }
 
 run()

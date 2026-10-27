@@ -37,10 +37,10 @@
   es.onerror = () => { badge.style.opacity = 0; }; // never show a stale state
   es.onmessage = (e) => {
     const s = JSON.parse(e.data);
-    const delayed = s.effectiveDelayMs >= 1000 || s.filling;
+    const delayed = s.effectiveDelayMs >= 1000 || s.filling || s.holding;
     badge.classList.toggle('delayed', delayed);
-    badge.classList.toggle('filling', !!s.filling);
-    document.getElementById('txt').textContent = delayed ? `${label} ${Math.round(s.effectiveDelayMs / 1000)}s` : 'LIVE';
+    badge.classList.toggle('filling', !!s.filling || !!s.holding); // blinks while viewers see the delay screen
+    document.getElementById('txt').textContent = s.holding ? `${label} · SCREEN` : delayed ? `${label} ${Math.round(s.effectiveDelayMs / 1000)}s` : 'LIVE';
     badge.style.opacity = (!delayed && hideLive) ? 0 : 1;
   };
 </script>

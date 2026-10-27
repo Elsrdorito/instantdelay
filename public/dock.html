@@ -21,12 +21,12 @@
     margin: 0; padding: 8px; background: var(--bg); color: var(--text);
     font: 13px/1.35 var(--font); -webkit-font-smoothing: antialiased; overflow-x: hidden;
   }
-  button, input, select { font: inherit; color: inherit; }
+  button, input, select, textarea { font: inherit; color: inherit; }
   button { cursor: pointer; border: 1px solid var(--line-2); background: var(--panel-2); border-radius: var(--r); padding: 7px 6px; font-weight: 600; letter-spacing: .02em; transition: background .12s, border-color .12s, transform .05s; }
   button:hover { background: #242830; border-color: #434954; }
   button:active { transform: translateY(1px); }
   button:disabled { opacity: .35; cursor: not-allowed; transform: none; }
-  button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+  button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
   .k { font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
 
   /* header */
@@ -40,6 +40,7 @@
   .lamp.on i { background: var(--green); box-shadow: 0 0 6px var(--green), 0 0 1px #000; }
   .lamp.bad i { background: var(--red); box-shadow: 0 0 6px rgba(255,74,74,.6); }
   .lamp.wait i { background: var(--amber); animation: blink 1s steps(2, start) infinite; }
+  .lamp.hold i { background: var(--amber); box-shadow: 0 0 6px rgba(255,176,32,.6); }
   @keyframes blink { to { visibility: hidden; } }
   .icon { width: 26px; height: 26px; padding: 0; display: grid; place-items: center; border-radius: var(--r); background: transparent; border-color: transparent; color: var(--muted); }
   .icon:hover { background: var(--panel-2); color: var(--text); }
@@ -67,6 +68,8 @@
   .bar > div { height: 100%; width: 0; background: repeating-linear-gradient(-45deg, var(--amber) 0 6px, #d08f12 6px 12px); background-size: 17px 100%; animation: stripes .6s linear infinite; transition: width .25s; }
   @keyframes stripes { to { background-position: 17px 0; } }
   .filling .bar { display: block; }
+  .holdtag { display: none; position: absolute; top: 8px; right: 10px; font: 600 9px/1 var(--font); letter-spacing: .14em; text-transform: uppercase; color: #ffd98a; background: #3a2a0e; border: 1px solid #6b4a0e; border-radius: 3px; padding: 3px 5px; z-index: 1; }
+  .holding .holdtag { display: block; }
 
   /* controls */
   .instant { width: 100%; padding: 11px 8px; font-size: 15px; letter-spacing: .12em; text-transform: uppercase; background: linear-gradient(#2a7a4e, #1f5e3c); border-color: #2f8f5c; color: #eafff2; text-shadow: 0 1px 0 rgba(0,0,0,.4); }
@@ -85,8 +88,12 @@
   .cut button:hover { background: #2c1518; border-color: #7a2a2a; }
   .cut button.armed { background: var(--red); border-color: #ff7a7a; color: #fff; animation: pulse .8s ease-in-out infinite; }
   @keyframes pulse { 50% { filter: brightness(1.25); } }
+  .clips { display: grid; grid-template-columns: repeat(auto-fit, minmax(56px, 1fr)); gap: 5px; }
+  .clips button { border-color: #1f4f7a; background: #0f1a26; color: #bfe0ff; }
+  .clips button:hover { background: #142537; border-color: #2f74b3; }
   .hint { font-size: 11px; color: var(--dim); margin-top: 6px; min-height: 14px; }
   .hint b { color: #ffb3b3; }
+  .hint.ok { color: var(--green); }
 
   /* footer stats */
   .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(70px, 1fr)); gap: 6px 10px; font: 11px var(--mono); color: var(--muted); }
@@ -97,8 +104,11 @@
   .panel { display: none; }
   .panel.show { display: block; }
   .field { display: flex; flex-direction: column; gap: 3px; margin-top: 8px; }
-  .field input, .field select { padding: 7px 8px; border-radius: var(--r); border: 1px solid var(--line-2); background: #0e1013; width: 100%; }
+  .field input, .field select, .field textarea { padding: 7px 8px; border-radius: var(--r); border: 1px solid var(--line-2); background: #0e1013; width: 100%; }
+  .field textarea { font: 12px/1.4 var(--mono); min-height: 64px; resize: vertical; }
   .field small { color: var(--dim); font-size: 11px; }
+  .check { display: flex; align-items: center; gap: 8px; margin-top: 10px; cursor: pointer; }
+  .check input { width: 15px; height: 15px; accent-color: var(--amber); }
   details { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 6px; }
   summary { cursor: pointer; color: var(--muted); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; font-weight: 600; }
   .two { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
@@ -106,6 +116,10 @@
   .save button.primary { background: #1f4f7a; border-color: #2f74b3; color: #e4f1ff; }
   .msg { font-size: 11px; color: var(--muted); }
   .msg.ok { color: var(--green); } .msg.err { color: #ff9a9a; }
+  .preview { margin-top: 6px; border: 1px solid var(--line-2); border-radius: var(--r); background: #000; aspect-ratio: 16 / 9; width: 100%; object-fit: contain; display: block; }
+  .inline { display: flex; gap: 6px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+  .inline button { padding: 6px 8px; font-size: 12px; }
+  .inline small { color: var(--dim); font-size: 11px; }
   .log { font: 10.5px/1.45 var(--mono); color: #b9bcc4; background: #0a0b0d; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; max-height: 260px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
   .log time { color: var(--dim); margin-right: 6px; }
   .log .w { color: #ffd98a; } .log .e { color: #ff9a9a; }
@@ -120,6 +134,7 @@
     .row input { flex-basis: 100%; order: -1; }
     .row button { flex: 1 1 0; }
     .stats { grid-template-columns: 1fr 1fr; }
+    .two { grid-template-columns: 1fr; }
   }
   .locked .instant { opacity: .35; pointer-events: none; }
 </style>
@@ -142,6 +157,7 @@
 
 <section class="card" id="main">
   <div class="readout" id="readout">
+    <span class="holdtag" id="holdtag">Delay screen</span>
     <div class="k" id="label">Viewers are behind by</div>
     <div class="num off" id="num">–</div>
     <div class="bar"><div id="fill"></div></div>
@@ -162,7 +178,12 @@
   <div class="cut" id="cut">
     <button data-cut="10">10 s</button><button data-cut="30">30 s</button><button data-cut="60">60 s</button><button data-cut="all">all</button>
   </div>
-  <div class="hint" id="hint">Removes what viewers haven't seen yet. The stream freezes that long once it gets there.</div>
+  <div class="hint" id="hint">Removes what viewers haven't seen yet. They see the delay screen that long once the stream gets there.</div>
+  <div class="section"><span class="k">Save a clip of the last…</span><span class="k" id="clipK" style="color:var(--dim)"></span></div>
+  <div class="clips" id="clips">
+    <button data-clip="30">30 s</button><button data-clip="60">60 s</button><button data-clip="120">2 min</button><button data-clip="max">max</button>
+  </div>
+  <div class="hint" id="clipHint">Writes an .flv of what OBS sent (no re-encoding) to the clips folder.</div>
 </section>
 
 <section class="card panel" id="settings">
@@ -176,6 +197,56 @@
     <div class="field"><label class="k" for="fIdle">End stream after OBS stops (s)</label><input id="fIdle" type="number" min="0" max="86400"></div>
   </div>
   <div class="field"><label class="k" for="fInit">Delay at startup (s)</label><input id="fInit" type="number" min="0" max="3600"></div>
+
+  <details open><summary>Delay screen · what viewers see while the delay builds</summary>
+    <div class="field"><label class="k" for="fScreen">Show</label>
+      <select id="fScreen">
+        <option value="default">Built-in "Stream delay is building" screen</option>
+        <option value="custom">My own picture (PNG)</option>
+        <option value="freeze">Freeze the last frame</option>
+        <option value="off">Nothing (Twitch drops the stream after ~30 s)</option>
+      </select></div>
+    <img class="preview" id="screenPrev" alt="Delay screen preview" src="/api/screen.png">
+    <div class="inline" id="screenUpload" style="display:none">
+      <input type="file" id="fScreenFile" accept="image/png" style="font-size:12px;max-width:100%">
+    </div>
+    <div class="inline">
+      <button id="btnScreenTest" title="Shows the screen to viewers for 5 seconds (skips 5 s of stream)">Preview to viewers · 5 s</button>
+      <small id="screenInfo"></small>
+    </div>
+    <small id="screenMsg" class="msg"></small>
+  </details>
+
+  <details><summary>Clips &amp; recording</summary>
+    <div class="two">
+      <div class="field"><label class="k" for="fClip">Keep for clips (s, 0 = off)</label><input id="fClip" type="number" min="0" max="600"></div>
+      <div class="field"><label class="k" for="fClipDir">Clips folder</label><input id="fClipDir" placeholder="clips"></div>
+    </div>
+    <div class="field"><label class="k" for="fRecord">Record the delayed output to folder (empty = off)</label><input id="fRecord" placeholder="recordings">
+      <small>One .flv per broadcast, exactly what the ingest received (delay screens included). Needs no extra CPU.</small></div>
+  </details>
+
+  <details><summary>Output extras</summary>
+    <div class="field"><label class="k" for="fBackup">Backup stream key or RTMP URL</label>
+      <input id="fBackup" type="password" autocomplete="off" placeholder="leave empty to keep · type - to clear">
+      <small id="backupNow">Used after two failed connections to the main ingest. Twitch: pick another server on stream.twitch.tv/ingests.</small></div>
+    <label class="check"><input type="checkbox" id="fBwTest"> <span>Twitch bandwidth test mode <small style="color:var(--dim)">(channel stays offline · for testing InstantDelay)</small></span></label>
+    <div class="field"><label class="k" for="fWebhook">Alerts webhook URL (Discord, Slack or any HTTP endpoint)</label>
+      <input id="fWebhook" placeholder="https://discord.com/api/webhooks/…">
+      <small>Sent on: output dropped / back, OBS gone / back, delay changed, bitrate drop, clip saved.</small></div>
+  </details>
+
+  <details><summary>OBS scenes · delay follows the scene</summary>
+    <div class="two">
+      <div class="field"><label class="k" for="fObsUrl">obs-websocket URL (empty = off)</label><input id="fObsUrl" placeholder="ws://127.0.0.1:4455"></div>
+      <div class="field"><label class="k" for="fObsPass">Password</label><input id="fObsPass" type="password" autocomplete="off" placeholder="leave empty to keep"></div>
+    </div>
+    <div class="field"><label class="k" for="fScenes">Rules · one per line: scene = seconds</label>
+      <textarea id="fScenes" placeholder="Gameplay = 30&#10;Just Chatting = 0&#10;Loading = 60"></textarea>
+      <small>OBS → Tools → WebSocket Server Settings. Scenes without a rule leave the delay as it is. <span id="obsState"></span></small></div>
+    <div class="inline"><button id="btnScenes">Fill in my OBS scenes</button></div>
+  </details>
+
   <details><summary>Advanced · needs a restart</summary>
     <div class="two">
       <div class="field"><label class="k" for="fHost">Listen on</label><select id="fHost"><option value="127.0.0.1">This PC only</option><option value="0.0.0.0">Whole network</option></select></div>
@@ -200,6 +271,8 @@
     <div><span>Out</span><b id="sOut">–</b></div>
     <div><span>Buffer</span><b id="sBuf">–</b></div>
     <div><span>Skipped</span><b id="sDrop">–</b></div>
+    <div id="sSceneBox" style="display:none"><span>OBS scene</span><b id="sScene">–</b></div>
+    <div id="sRecBox" style="display:none"><span>Recording</span><b id="sRec">–</b></div>
   </div>
 </section>
 
@@ -228,7 +301,8 @@
   $('presets').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) setDelay(b.dataset.sec); });
 
   // Cut: first tap arms, second tap within 3s fires.
-  const disarm = () => { armed = null; clearTimeout(armTimer); document.querySelectorAll('#cut button').forEach((b) => b.classList.remove('armed')); $('hint').innerHTML = 'Removes what viewers haven\'t seen yet. The stream freezes that long once it gets there.'; };
+  const HINT = 'Removes what viewers haven\'t seen yet. They see the delay screen that long once the stream gets there.';
+  const disarm = () => { armed = null; clearTimeout(armTimer); document.querySelectorAll('#cut button').forEach((b) => b.classList.remove('armed')); $('hint').innerHTML = HINT; };
   $('cut').addEventListener('click', (e) => {
     const b = e.target.closest('button'); if (!b) return;
     const v = b.dataset.cut;
@@ -236,6 +310,16 @@
     disarm(); armed = v; b.classList.add('armed');
     $('hint').innerHTML = `<b>Tap again</b> to cut ${v === 'all' ? 'the whole buffer' : 'the last ' + v + ' s'}.`;
     armTimer = setTimeout(disarm, 3000);
+  });
+
+  // Clips: one tap, written in the background.
+  $('clips').addEventListener('click', async (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    const sec = b.dataset.clip === 'max' ? Math.ceil((s.clipAvailableMs || 0) / 1000) : b.dataset.clip;
+    const h = $('clipHint'); h.className = 'hint'; h.textContent = 'Saving…';
+    const r = await fetch('/api/clip?sec=' + sec).then((x) => x.json()).catch(() => ({ error: 'InstantDelay is not reachable' }));
+    if (r.error) { h.className = 'hint'; h.innerHTML = `<b>${r.error}</b>`; return; }
+    h.className = 'hint ok'; h.textContent = `Saved ${r.file} · ${fmtS(r.ms)} s · ${fmtB(r.bytes)}`;
   });
 
   // Keyboard (when the dock has focus): 1-9 presets, 0 instant, Esc disarm.
@@ -260,34 +344,102 @@
   $('btnSettings').onclick = () => show('settings');
   $('btnLog').onclick = () => show('log');
 
+  const screenChoice = (v) => (v === 'default' || v === 'freeze' || v === 'off' ? v : 'custom');
+  const refreshPreview = () => { $('screenPrev').src = '/api/screen.png?t=' + Date.now(); };
+  const scenesText = (rules) => Object.entries(rules || {}).map(([k, v]) => `${k} = ${v}`).join('\n');
+  function parseScenes(text) {
+    const rules = {};
+    for (const line of text.split('\n')) {
+      const t = line.trim(); if (!t) continue;
+      const m = t.match(/^(.*?)\s*=\s*(\d+(?:\.\d+)?)\s*$/);
+      if (!m) throw new Error(`scene rule "${t}" must look like: Scene name = 30`);
+      rules[m[1]] = Number(m[2]);
+    }
+    return rules;
+  }
+
   async function loadSettings() {
     cfg = await api('/api/config'); if (!cfg) return;
     $('fKey').value = '';
     $('outNow').textContent = cfg.outputMasked ? 'Now: ' + cfg.outputMasked : 'No stream key set yet. Twitch: dashboard.twitch.tv → Settings → Stream → Primary Stream key.';
     $('fPresets').value = cfg.presetsSec.join(', ');
     $('fMax').value = cfg.maxDelaySec; $('fIdle').value = cfg.endAfterIdleSec; $('fInit').value = cfg.initialDelaySec;
+    $('fScreen').value = screenChoice(cfg.delayScreen); $('screenUpload').style.display = $('fScreen').value === 'custom' ? '' : 'none';
+    $('screenPrev').style.display = ['default', 'custom'].includes($('fScreen').value) ? '' : 'none';
+    refreshPreview();
+    $('fClip').value = cfg.clipSec; $('fClipDir').value = cfg.clipDir; $('fRecord').value = cfg.recordDir;
+    $('fBackup').value = ''; $('backupNow').textContent = cfg.outputBackupMasked ? 'Now: ' + cfg.outputBackupMasked + ' · type - to clear' : 'Used after two failed connections to the main ingest. Twitch: pick another server on stream.twitch.tv/ingests.';
+    $('fBwTest').checked = !!cfg.bandwidthTest; $('fWebhook').value = cfg.webhookUrl;
+    $('fObsUrl').value = cfg.obsWsUrl; $('fObsPass').value = ''; $('fObsPass').placeholder = cfg.obsWsPasswordSet ? 'leave empty to keep · type - to clear' : 'none';
+    $('fScenes').value = scenesText(cfg.sceneDelays);
     $('fHost').value = cfg.rtmpHost === '0.0.0.0' ? '0.0.0.0' : '127.0.0.1';
     $('fRtmpPort').value = cfg.rtmpPort; $('fIngestKey').value = cfg.ingestKey; $('fHttpPort').value = cfg.httpPort;
     $('fTransport').value = cfg.transport; $('fMaxBuf').value = cfg.maxBufferMB;
-    $('saveMsg').textContent = ''; $('saveMsg').className = 'msg';
+    $('saveMsg').textContent = ''; $('saveMsg').className = 'msg'; $('screenMsg').textContent = '';
   }
+  $('fScreen').onchange = () => {
+    const v = $('fScreen').value;
+    $('screenUpload').style.display = v === 'custom' ? '' : 'none';
+    $('screenPrev').style.display = ['default', 'custom'].includes(v) ? '' : 'none';
+  };
+  $('fScreenFile').onchange = async () => {
+    const f = $('fScreenFile').files[0]; if (!f) return;
+    const m = $('screenMsg'); m.className = 'msg'; m.textContent = 'Uploading…';
+    try {
+      const r = await fetch('/api/screen', { method: 'POST', headers: { 'Content-Type': 'image/png' }, body: f });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || r.statusText);
+      cfg = j.config; m.className = 'msg ok'; m.textContent = 'Picture saved and in use.'; refreshPreview();
+    } catch (e) { m.className = 'msg err'; m.textContent = e.message; }
+  };
+  $('btnScreenTest').onclick = async () => {
+    const m = $('screenMsg'); m.className = 'msg'; m.textContent = 'Showing the screen to viewers for 5 s…';
+    const r = await fetch('/api/screen/preview?sec=5').then((x) => x.json()).catch(() => ({ error: 'InstantDelay is not reachable' }));
+    if (r.error) { m.className = 'msg err'; m.textContent = r.error; } else { m.className = 'msg ok'; m.textContent = 'Viewers see the screen now; the stream resumes on the next keyframe.'; }
+  };
+  $('btnScenes').onclick = async () => {
+    const r = await fetch('/api/scenes').then((x) => x.json()).catch(() => ({ error: 'InstantDelay is not reachable' }));
+    if (r.error) { $('obsState').textContent = r.error; return; }
+    let rules = {};
+    try { rules = parseScenes($('fScenes').value); } catch {}
+    const lines = r.scenes.map((name) => `${name} = ${rules[name] !== undefined ? rules[name] : ''}`);
+    for (const [k, v] of Object.entries(rules)) if (!r.scenes.includes(k)) lines.push(`${k} = ${v}`);
+    $('fScenes').value = lines.join('\n');
+    $('obsState').textContent = `Current scene: ${r.current}. Fill in seconds; leave blank for no rule.`;
+  };
+
   $('btnSave').onclick = async () => {
-    const presets = $('fPresets').value.split(/[\s,;]+/).filter(Boolean).map(Number);
-    const body = {
-      presetsSec: presets, maxDelaySec: Number($('fMax').value), endAfterIdleSec: Number($('fIdle').value), initialDelaySec: Number($('fInit').value),
-      rtmpHost: $('fHost').value, rtmpPort: Number($('fRtmpPort').value), ingestKey: $('fIngestKey').value.trim(), httpPort: Number($('fHttpPort').value),
-      transport: $('fTransport').value, maxBufferMB: Number($('fMaxBuf').value),
-    };
-    if ($('fKey').value.trim()) body.streamKey = $('fKey').value.trim();
     const m = $('saveMsg'); m.className = 'msg'; m.textContent = 'Saving…';
+    let body;
+    try {
+      const presets = $('fPresets').value.split(/[\s,;]+/).filter(Boolean).map(Number);
+      const screen = $('fScreen').value;
+      const scenes = parseScenes($('fScenes').value.split('\n').filter((l) => !/=\s*$/.test(l)).join('\n'));
+      body = {
+        presetsSec: presets, maxDelaySec: Number($('fMax').value), endAfterIdleSec: Number($('fIdle').value), initialDelaySec: Number($('fInit').value),
+        delayScreen: screen === 'custom' ? (cfg && screenChoice(cfg.delayScreen) === 'custom' ? cfg.delayScreen : 'screens/custom.png') : screen,
+        clipSec: Number($('fClip').value), clipDir: $('fClipDir').value.trim() || 'clips', recordDir: $('fRecord').value.trim(),
+        bandwidthTest: $('fBwTest').checked, webhookUrl: $('fWebhook').value.trim(),
+        obsWsUrl: $('fObsUrl').value.trim(), sceneDelays: scenes,
+        rtmpHost: $('fHost').value, rtmpPort: Number($('fRtmpPort').value), ingestKey: $('fIngestKey').value.trim(), httpPort: Number($('fHttpPort').value),
+        transport: $('fTransport').value, maxBufferMB: Number($('fMaxBuf').value),
+      };
+      if ($('fKey').value.trim()) body.streamKey = $('fKey').value.trim();
+      const bk = $('fBackup').value.trim(); if (bk === '-') body.outputUrlBackup = ''; else if (bk) body.backupKey = bk;
+      const op = $('fObsPass').value; if (op === '-') body.obsWsPassword = ''; else if (op) body.obsWsPassword = op;
+    } catch (e) { m.className = 'msg err'; m.textContent = e.message; return; }
     try {
       const r = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || r.statusText);
       m.className = 'msg ok';
       m.textContent = j.restartRequired.length ? 'Saved. Restart InstantDelay to apply: ' + j.restartRequired.join(', ') : 'Saved.';
-      $('fKey').value = ''; cfg = j.config; $('outNow').textContent = cfg.outputMasked ? 'Now: ' + cfg.outputMasked : '';
+      cfg = j.config;
+      $('fKey').value = ''; $('fBackup').value = ''; $('fObsPass').value = '';
+      $('outNow').textContent = cfg.outputMasked ? 'Now: ' + cfg.outputMasked : '';
+      $('backupNow').textContent = cfg.outputBackupMasked ? 'Now: ' + cfg.outputBackupMasked + ' · type - to clear' : 'Not set.';
       presetsKey = '';
+      refreshPreview();
     } catch (e) { m.className = 'msg err'; m.textContent = e.message; }
   };
 
@@ -298,7 +450,7 @@
     const stick = el.scrollTop + el.clientHeight >= el.scrollHeight - 8;
     for (const l of j.lines) {
       const d = document.createElement('div');
-      d.className = /error|cannot|rejected|not keeping up|in use/i.test(l.text) ? 'e' : /retry|warn|disconnected|stopped|no data|replaced/i.test(l.text) ? 'w' : '';
+      d.className = /error|cannot|rejected|not keeping up|in use|failed/i.test(l.text) ? 'e' : /retry|warn|disconnected|stopped|no data|replaced|paused|dropped/i.test(l.text) ? 'w' : '';
       const t = document.createElement('time'); t.textContent = l.time; d.appendChild(t); d.appendChild(document.createTextNode(l.text)); el.appendChild(d);
     }
     while (el.children.length > 300) el.removeChild(el.firstChild);
@@ -313,7 +465,9 @@
     $('ver').textContent = 'v' + (st.version || '');
     const alert = $('alert');
     if (!st.outputConfigured) { alert.className = 'alert show warn'; alert.textContent = 'No stream key yet: open Settings (⚙) and paste your Twitch stream key.'; }
-    else if (st.outputRetryInSec) { alert.className = 'alert show'; alert.textContent = `Output disconnected. Retrying in ${st.outputRetryInSec}s… (see Log)`; }
+    else if (st.outputRetryInSec) { alert.className = 'alert show'; alert.textContent = `Output disconnected. Retrying in ${st.outputRetryInSec}s${st.outputTarget === 'backup' ? ' on the backup ingest' : ''}… (see Log)`; }
+    else if (st.bandwidthTest) { alert.className = 'alert show warn'; alert.textContent = 'Bandwidth test mode: Twitch keeps your channel OFFLINE. Turn it off in Settings when done.'; }
+    else if (st.outputActive && st.outputTarget === 'backup') { alert.className = 'alert show warn'; alert.textContent = 'Streaming through the backup ingest.'; }
     else alert.className = 'alert';
 
     const key = st.presetsSec.join(',') + '|' + st.maxDelaySec;
@@ -332,22 +486,36 @@
     else { text = fmtS(st.effectiveDelayMs) + '<small>s</small>'; num.className = 'num'; }
     if (text !== lastNum) { num.innerHTML = text; lastNum = text; if (!noStream) { num.classList.add('tick'); setTimeout(() => num.classList.remove('tick'), 350); } }
     $('readout').classList.toggle('filling', st.filling);
+    $('readout').classList.toggle('holding', !!st.holding);
+    $('holdtag').textContent = st.holdKind === 'screen' ? 'Delay screen' : st.holdKind === 'freeze' ? 'Frozen frame' : 'Silence';
     $('fill').style.width = (st.fillProgress * 100) + '%';
-    $('label').textContent = st.filling ? 'Building delay · output paused' : noStream ? 'Waiting for OBS' : 'Viewers are behind by';
+    $('label').textContent = st.holding && !st.inputActive ? 'OBS is gone · viewers see the delay screen'
+      : st.filling ? (st.holding ? 'Building delay · viewers see the delay screen' : 'Building delay · output paused')
+        : st.holding ? 'Viewers see the delay screen' : noStream ? 'Waiting for OBS' : 'Viewers are behind by';
     $('subL').textContent = st.filling ? `${fmtS(st.bufferedMs)} / ${fmtS(st.delayMs)} s` : st.delayMs ? `target ${fmtS(st.delayMs)} s` : 'no delay';
     $('subR').textContent = st.inputActive ? `${st.inKbps} kb/s in` : '';
 
     const lampIn = $('lampIn'), lampOut = $('lampOut');
     lampIn.className = 'lamp ' + (st.inputActive ? 'on' : st.inputConnected ? 'wait' : 'bad');
-    lampOut.className = 'lamp ' + (st.outputActive ? 'on' : st.outputConnecting ? 'wait' : st.filling && st.outputConfigured ? '' : 'bad');
-    lampOut.title = st.outputActive ? 'Sending to the ingest' : st.outputConnecting ? 'Connecting…' : st.filling ? 'Paused while the delay builds' : 'Not connected';
+    lampOut.className = 'lamp ' + (st.outputActive ? (st.holding ? 'hold' : 'on') : st.outputConnecting ? 'wait' : st.filling && st.outputConfigured ? '' : 'bad');
+    lampOut.title = st.outputActive ? (st.holding ? 'Sending the delay screen' : 'Sending to the ingest') : st.outputConnecting ? 'Connecting…' : st.filling ? 'Paused while the delay builds' : 'Not connected';
 
     $('sIn').textContent = st.inputActive ? st.inKbps + ' kb/s' : '–';
     $('sOut').textContent = st.outputActive ? st.outKbps + ' kb/s' : '–';
     $('sBuf').textContent = st.bufferTags ? `${fmtS(st.bufferedMs)}s · ${fmtB(st.bufferedBytes)}` : '–';
     $('sDrop').textContent = st.dropped;
+    $('sSceneBox').style.display = st.obs && st.obs.configured ? '' : 'none';
+    if (st.obs && st.obs.configured) $('sScene').textContent = st.obs.connected ? (st.obs.scene || '–') + (st.obs.rule !== undefined ? ` → ${st.obs.rule}s` : '') : st.obs.unsupported ? 'needs Node 22' : 'connecting…';
+    $('sRecBox').style.display = st.recording ? '' : 'none';
+    if (st.recording) $('sRec').textContent = st.recording.split(/[\\/]/).pop();
     $('bufK').textContent = st.bufferTags ? `buffer ${fmtS(st.bufferedMs)} s` : '';
     document.querySelectorAll('#cut button').forEach((b) => { b.disabled = !st.bufferTags || (b.dataset.cut !== 'all' && Number(b.dataset.cut) * 1000 > st.bufferedMs + 500); });
+    const avail = st.clipAvailableMs || 0;
+    $('clipK').textContent = st.clipSec ? (avail ? `${fmtS(avail)} s available` : '') : 'off · see Settings';
+    document.querySelectorAll('#clips button').forEach((b) => { b.disabled = !st.clipSec || avail < 2000 || (b.dataset.clip !== 'max' && Number(b.dataset.clip) * 1000 > avail + 1000); });
+    if (open === 'settings' && st.screen && st.screen.mode === 'screen' && st.screen.frameBytes) {
+      $('screenInfo').textContent = `${st.screen.width}×${st.screen.height}${st.screen.nominal ? ' (assumed)' : ''} · ${fmtB(st.screen.frameBytes)} per keyframe · ~${st.screen.kbps} kb/s while shown`;
+    } else if (open === 'settings' && st.screen) $('screenInfo').textContent = st.screen.mode === 'freeze' ? (st.screen.reason ? `Freezing the last frame (${st.screen.reason})` : 'Freezes the last frame') : st.screen.mode === 'off' ? 'Off: nothing is sent while the delay builds' : '';
     if (open === 'log' && st.logSeq !== logSeq) loadLog(false);
   }
 

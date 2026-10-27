@@ -10,7 +10,8 @@ const FILE = process.env.INSTANTDELAY_CONFIG || path.join(ROOT, 'config.json');
 const PLACEHOLDER = 'YOUR_TWITCH_STREAM_KEY';
 
 // Keys that can be changed while running, and keys that need a restart.
-const LIVE_KEYS = ['outputUrl', 'presetsSec', 'maxDelaySec', 'initialDelaySec', 'endAfterIdleSec', 'maxBufferMB'];
+const LIVE_KEYS = ['outputUrl', 'outputUrlBackup', 'bandwidthTest', 'presetsSec', 'maxDelaySec', 'initialDelaySec', 'endAfterIdleSec', 'maxBufferMB',
+  'delayScreen', 'clipSec', 'clipDir', 'recordDir', 'webhookUrl', 'obsWsUrl', 'obsWsPassword', 'sceneDelays'];
 const RESTART_KEYS = ['rtmpHost', 'rtmpPort', 'ingestKey', 'httpPort', 'transport'];
 // Only editable in the file (it names a program to run).
 const FILE_ONLY_KEYS = ['ffmpegPath'];
@@ -59,9 +60,23 @@ function validate(c) {
   if ('presetsSec' in c && !(Array.isArray(c.presetsSec) && c.presetsSec.length <= 12 && c.presetsSec.every((p) => Number.isFinite(p) && p >= 0 && p <= 3600))) {
     errs.push('"presetsSec" must be a list of up to 12 numbers of seconds');
   }
-  if ('outputUrl' in c && typeof c.outputUrl !== 'string') errs.push('"outputUrl" must be a string');
+  num('clipSec', 0, 600);
   if ('transport' in c && !['native', 'ffmpeg'].includes(c.transport)) errs.push('"transport" must be "native" or "ffmpeg"');
-  for (const k of ['rtmpHost', 'ingestKey', 'ffmpegPath']) if (k in c && typeof c[k] !== 'string') errs.push(`"${k}" must be a string`);
+  for (const k of ['outputUrl', 'outputUrlBackup', 'rtmpHost', 'ingestKey', 'ffmpegPath', 'delayScreen', 'clipDir', 'recordDir', 'webhookUrl', 'obsWsUrl', 'obsWsPassword']) {
+    if (k in c && typeof c[k] !== 'string') errs.push(`"${k}" must be a string`);
+  }
+  if ('bandwidthTest' in c && typeof c.bandwidthTest !== 'boolean') errs.push('"bandwidthTest" must be true or false');
+  if ('outputUrlBackup' in c && c.outputUrlBackup && !/^rtmps?:\/\//i.test(c.outputUrlBackup)) errs.push('"outputUrlBackup" must be an rtmp:// or rtmps:// URL');
+  if ('delayScreen' in c && typeof c.delayScreen === 'string' && !['default', 'freeze', 'off'].includes(c.delayScreen) && !/\.png$/i.test(c.delayScreen)) {
+    errs.push('"delayScreen" must be "default", "freeze", "off" or the path of a .png file');
+  }
+  if ('webhookUrl' in c && c.webhookUrl && !/^https?:\/\//i.test(c.webhookUrl)) errs.push('"webhookUrl" must be an http(s):// URL');
+  if ('obsWsUrl' in c && c.obsWsUrl && !/^wss?:\/\//i.test(c.obsWsUrl)) errs.push('"obsWsUrl" must be a ws:// URL such as ws://127.0.0.1:4455');
+  if ('sceneDelays' in c && !(c.sceneDelays && typeof c.sceneDelays === 'object' && !Array.isArray(c.sceneDelays) &&
+    Object.values(c.sceneDelays).every((v) => Number.isFinite(v) && v >= 0 && v <= 3600))) {
+    errs.push('"sceneDelays" must map scene names to seconds, e.g. {"Gameplay": 30}');
+  }
+  for (const k of ['clipDir', 'recordDir']) if (c[k] && path.isAbsolute(c[k]) === false && c[k].split(/[\\/]/).includes('..')) errs.push(`"${k}" must not contain ".."`);
   if (c.rtmpPort && c.httpPort && c.rtmpPort === c.httpPort) errs.push('"rtmpPort" and "httpPort" must differ');
   return errs;
 }
@@ -105,11 +120,18 @@ function maskUrl(url) {
 // What the dock may see.
 function publicView(cfg) {
   const v = {};
-  for (const k of Object.keys(DEFAULTS)) if (k !== 'outputUrl') v[k] = cfg[k];
+  for (const k of Object.keys(DEFAULTS)) if (!['outputUrl', 'outputUrlBackup', 'obsWsPassword'].includes(k)) v[k] = cfg[k];
   v.outputMasked = outputConfigured(cfg) ? maskUrl(cfg.outputUrl) : '';
   v.outputIsFile = !!cfg.outputUrl && !/^rtmps?:\/\//i.test(cfg.outputUrl);
+  v.outputBackupMasked = cfg.outputUrlBackup ? maskUrl(cfg.outputUrlBackup) : '';
+  v.obsWsPasswordSet = !!cfg.obsWsPassword;
   v.configFile = FILE;
   return v;
 }
 
-module.exports = { ROOT, FILE, DEFAULTS, LIVE_KEYS, RESTART_KEYS, FILE_ONLY_KEYS, ConfigError, load, validate, save, outputConfigured, outputUrlFrom, secretsOf, maskUrl, publicView, readJson };
+// Everything the log must redact.
+function allSecrets(cfg) {
+  return [...secretsOf(cfg.outputUrl), ...secretsOf(cfg.outputUrlBackup), cfg.obsWsPassword].filter((s) => s && s.length >= 4);
+}
+
+module.exports = { ROOT, FILE, DEFAULTS, LIVE_KEYS, RESTART_KEYS, FILE_ONLY_KEYS, ConfigError, load, validate, save, outputConfigured, outputUrlFrom, secretsOf, allSecrets, maskUrl, publicView, readJson };

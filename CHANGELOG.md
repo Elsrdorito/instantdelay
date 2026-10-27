@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.1.0 — 2026-10-26
+
+**The delay screen.** Raising the delay no longer freezes the stream (and no longer makes Twitch drop it after ~30 s): viewers see a picture while the buffer fills.
+
+### Added
+- **Delay screen**: while the output would pause (delay raised, cut hole, OBS gone) InstantDelay sends a still picture + silence instead. Built-in *"Stream delay is building"* screen, or your own PNG (upload in ⚙ Settings; letterboxed, never stretched). `delayScreen` setting: `default` / `<file>.png` / `freeze` / `off`. A **Preview to viewers** button shows it for 5 s so you can check it on your channel.
+  - Done with a tiny built-in H.264 encoder (`src/h264.js`): intra-only picture using the stream's own SPS plus one extra CAVLC PPS, then ~10-byte skip frames at 10 fps and a keyframe every 2 s. About 20 KB per keyframe at 1080p, encoded once per stream in ~150 ms. Bit-exact against ffmpeg's decoder in the tests. AAC silence frames keep the audio track alive. Streams the encoder can't draw for (HEVC/AV1, 10-bit, interlaced) fall back to repeating the last keyframe.
+  - The stream resumes on OBS's next keyframe; pauses under 1.5 s get no screen.
+- **Save a clip**: `GET /api/clip?sec=N` and dock buttons write the last N seconds of what OBS sent to `clips/<timestamp>.flv`, no re-encoding (`clipSec` keeps a replay window, default 60 s).
+- **Record the broadcast**: `recordDir` writes one `.flv` per output session, exactly what the ingest received.
+- **OBS scene rules**: `obsWsUrl` / `obsWsPassword` / `sceneDelays` — the delay follows the OBS scene via obs-websocket v5 (Node.js 22+). The dock can fill in your scene list.
+- **Backup ingest** (`outputUrlBackup`): used after two failed connections to the main one.
+- **Twitch bandwidth test mode** (`bandwidthTest`): stream to Twitch without going live, for testing.
+- **Alerts** (`webhookUrl`): Discord / Slack / generic JSON webhook on output dropped or back, OBS gone or back, delay changed, OBS bitrate collapse, clip saved.
+- Dock: *Delay screen* tag and amber OUT lamp while viewers see the screen; clip buttons; OBS scene and recording in the stats row. Overlay shows `DELAY · SCREEN` meanwhile.
+- Status: `holding`, `holdKind`, `holdMs`, `holds`, `holdTags`, `screen`, `obs`, `recording`, `clipAvailableMs`, `outputTarget`.
+
+### Changed
+- `cut` no longer freezes the output when it reaches the hole: viewers see the delay screen for that long.
+
 ## 2.0.1 — 2026-10-25
 
 - Windows: the ffmpeg transport now kills the whole ffmpeg process tree (Chocolatey installs a shim that starts the real ffmpeg as a child; killing only the shim left it running and the RTMP port busy).

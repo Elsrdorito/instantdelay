@@ -1,12 +1,12 @@
 {
   "name": "instantdelay",
-  "version": "2.0.1",
-  "description": "Change your Twitch/YouTube/Kick stream delay live, without restarting OBS. A local RTMP delay proxy with an OBS dock, overlay and Stream Deck API. No dependencies.",
+  "version": "2.1.0",
+  "description": "Change your Twitch/YouTube/Kick stream delay live, without restarting OBS. A local RTMP delay proxy with a delay screen, clips, an OBS dock, overlay and Stream Deck API. No dependencies.",
   "scripts": {
     "start": "node src/server.js",
     "setup": "node src/setup.js",
     "test": "npm run test:unit && npm run test:rtmp && npm run test:e2e",
-    "test:unit": "node --test test/delay.test.js test/rtmp-unit.test.js",
+    "test:unit": "node --test test/delay.test.js test/hold.test.js test/rtmp-unit.test.js test/png.test.js test/h264.test.js test/obsws.test.js",
     "test:rtmp": "node test/rtmp-e2e.js",
     "test:e2e": "node test/e2e.js && OUTPUT=rtmp node test/e2e.js && TRANSPORT=ffmpeg node test/e2e.js",
     "lint": "node scripts/lint.js"
