@@ -13,12 +13,12 @@ OBS ──RTMP──▶ InstantDelay (your PC, holds the buffer) ──RTMP─�
 <p align="center"><img src="docs/dock.png" width="300" alt="The InstantDelay dock inside OBS"> <img src="docs/dock-filling.png" width="300" alt="The dock while a 120 s delay builds up"></p>
 
 - **Lowering the delay** (⚡ Instant) skips forward to the next keyframe. Viewers see a clean cut back to live.
-- **Raising the delay** shows viewers a **delay screen** while the buffer fills (0 → 60 s = 60 s of the screen, then the stream continues where it left off). The built-in screen says *"Stream delay is building"*; upload your own PNG in Settings. Twitch keeps the stream online the whole time.
+- **Raising the delay** applies **at once**: InstantDelay keeps the last minute of what already went out and sends it again, so viewers see the last N seconds a second time (a rewind) and the stream carries on N seconds behind live. No pause, no screen, no "building". Prefer the classic way? Set *When the delay goes up* to **Delay screen** in Settings: viewers see a picture while the buffer fills (0 → 60 s = 60 s of the screen). The built-in screen says *"Stream delay is building"*; upload your own PNG. Twitch keeps the stream online the whole time either way.
 - **Cut** throws away the newest N seconds of the buffer, the part viewers haven't seen yet. The delay stays; when the output reaches the hole viewers see the delay screen that long.
 - **Save a clip** of the last 30 s / 60 s / 2 min straight from the buffer, as an `.flv`, with zero extra CPU. Optionally **record** every broadcast exactly as the ingest received it.
 - **Delay follows your OBS scene** (optional, via obs-websocket): *Gameplay* → 30 s, *Just Chatting* → live.
 - Backup ingest, Twitch bandwidth-test mode, Discord/Slack alerts when something drops.
-- Video and audio are **never re-encoded**. CPU use is close to zero; memory is bitrate × delay (6 Mbps × 60 s ≈ 45 MB). The delay screen is the one exception: a tiny built-in H.264 encoder draws it once per stream (~20 KB, ~150 ms).
+- Video and audio are **never re-encoded**. CPU use is close to zero; memory is bitrate × (delay + replay window) (6 Mbps × 120 s ≈ 90 MB). The delay screen is the one exception: a tiny built-in H.264 encoder draws it once per stream (~20 KB, ~150 ms).
 - **No dependencies.** One Node.js process that speaks RTMP itself. No ffmpeg, no npm install, no build step.
 
 ## Setup on Windows (about 3 minutes)
@@ -43,7 +43,7 @@ macOS / Linux: install [Node.js 18+](https://nodejs.org) and run `./start.sh`.
 
 | | |
 |---|---|
-| **Readout** | How far behind viewers are *right now*. Amber = delayed, green = live. While a delay builds it shows the progress bar; a **Delay screen** tag means viewers are looking at the screen right now. |
+| **Readout** | How far behind viewers are *right now*. Amber = delayed, green = live. A **Replay** tag means viewers are watching the rewound seconds (with the time left); a **Delay screen** tag means they are looking at the screen; while a delay builds in screen mode it shows the progress bar. |
 | **OBS / OUT lamps** | Green: data flowing. Solid amber OUT: the delay screen is being sent. Blinking amber: connecting. Red: not connected. |
 | **⚡ Instant** | Delay 0, jump to live. |
 | **Presets / −5 / +5 / custom** | Set the delay. Edit the presets in Settings. |
@@ -51,7 +51,7 @@ macOS / Linux: install [Node.js 18+](https://nodejs.org) and run `./start.sh`.
 | **Save a clip of the last…** | One tap writes an `.flv` of the last 30 s / 60 s / 2 min of what OBS sent to the `clips/` folder (plays in VLC; drop it into any editor). |
 | **🔒** | Lock the controls against misclicks. |
 | **≡ Log** | What the InstantDelay window says, in the dock. |
-| **⚙ Settings** | Stream key, presets, delay screen (with a *Preview to viewers* button), clips & recording, backup ingest, alerts, OBS scene rules, advanced options. Saved to `config.json`. |
+| **⚙ Settings** | Stream key, presets, what happens when the delay goes up (rewind or delay screen), delay screen (with a *Preview to viewers* button), clips & recording, backup ingest, alerts, OBS scene rules, advanced options. Saved to `config.json`. |
 
 Keyboard (when the dock has focus): `1`–`9` presets, `0` instant, `Esc` disarm a cut.
 
@@ -106,7 +106,9 @@ Everything here can be edited in the dock (⚙). Keys marked ↻ need a restart.
 | `maxBufferMB` | `1024` | Memory cap for the buffer. If the delay would need more, content is released early. |
 | `initialDelaySec` | `0` | Delay when the app starts. |
 | `endAfterIdleSec` | `30` | End the broadcast this long after OBS stops (0 = keep it open). |
-| `delayScreen` | `default` | What viewers get while the output would otherwise pause: `default` (built-in screen), a `.png` path (your own picture; the dock uploads to `screens/custom.png`), `freeze` (repeat the last frame) or `off` (send nothing; Twitch drops the stream after ~30 s). |
+| `raiseMode` | `rewind` | What happens when the delay goes up. `rewind`: the last N seconds are sent again and the new delay applies at once. `screen`: the output pauses and viewers see the delay screen while the buffer fills. |
+| `rewindSec` | `60` | How far back a rewind can reach (the replay window kept in memory, shared with clips). A raise bigger than this shows the delay screen for the difference first, then the replay. |
+| `delayScreen` | `default` | What viewers get while the output has to pause (cut hole, OBS gone, screen-mode raise): `default` (built-in screen), a `.png` path (your own picture; the dock uploads to `screens/custom.png`), `freeze` (repeat the last frame) or `off` (send nothing; Twitch drops the stream after ~30 s). |
 | `clipSec` / `clipDir` | `60` / `clips` | Keep the last N seconds for *Save a clip* (0 = off; costs bitrate × N of memory) and where clips go. |
 | `recordDir` | `""` | Folder for a recording of every broadcast, exactly as sent to the ingest (`.flv`, no extra CPU). Empty = off. |
 | `outputUrlBackup` | `""` | Second ingest, used after two failed connections to the main one (alternating). |
@@ -143,6 +145,7 @@ All on `http://127.0.0.1:8787`. Only reachable from this PC; cross-site browser 
 
 ## Known limits
 
+- A rewind starts on the keyframe at or before the N-seconds mark, so viewers get up to one keyframe interval (2 s) more replay than asked; the stream never skips anything. Rewinds need the content to still be in memory: right after going live there is less than `rewindSec` to rewind into, and the delay screen covers the rest.
 - When the stream resumes after a delay screen it restarts on OBS's next keyframe, so up to one keyframe interval (2 s with the recommended settings) of content is skipped. Pauses shorter than 1.5 s get no screen at all.
 - The delay screen is drawn for H.264 4:2:0 8-bit progressive streams (what OBS sends to Twitch). For HEVC/AV1, 10-bit or interlaced video it falls back to repeating the last keyframe (`freeze`); audio silence is generated for AAC mono/stereo.
 - If OBS stops and restarts within `endAfterIdleSec`, one continuous broadcast is kept (viewers see the delay screen in between). Changing encoder settings in between works (codec headers are re-sent), but some players need a moment to catch up.

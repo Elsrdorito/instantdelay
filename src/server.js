@@ -55,8 +55,16 @@ if (config.transport === 'ffmpeg') {
 }
 
 const engine = new DelayEngine({ delayMs: config.initialDelaySec * 1000, maxDelayMs: config.maxDelaySec * 1000, maxBufferBytes: config.maxBufferMB * 1048576 });
-engine.replayMs = config.clipSec * 1000;
+applyEngineConfig();
 engine.start();
+
+// The replay window serves clips and rewinds; keep enough for whichever wants more.
+function applyEngineConfig() {
+  engine.maxDelayMs = config.maxDelaySec * 1000;
+  engine.maxBufferBytes = config.maxBufferMB * 1048576;
+  engine.raiseMode = config.raiseMode;
+  engine.replayMs = Math.max(config.clipSec, config.raiseMode === 'rewind' ? config.rewindSec : 0) * 1000;
+}
 
 // ------------------------------------------------------------ delay screen
 
@@ -393,7 +401,11 @@ function statusJson() {
     presetsSec: config.presetsSec,
     maxDelaySec: config.maxDelaySec,
     clipSec: config.clipSec,
-    clipAvailableMs: engine.replay.length ? now - engine.replay.peek().recv : (engine.buffer.length ? now - engine.buffer.peek().recv : 0),
+    // The replay window may be larger than the clip window (rewinds); clips never get more than clipSec + delay.
+    clipAvailableMs: Math.min(config.clipSec * 1000 + engine.delayMs,
+      engine.replay.length ? now - engine.replay.peek().recv : (engine.buffer.length ? now - engine.buffer.peek().recv : 0)),
+    raiseMode: config.raiseMode,
+    rewindSec: config.rewindSec,
     recording: rec ? path.relative(ROOT, rec.file) : null,
     screen: hold.info(engine.headers.get(TAG_VIDEO)),
     obs: { configured: !!config.obsWsUrl, connected: !!(obs && obs.connected), scene: obsScene, unsupported: obsUnsupported, rule: obsScene !== null ? config.sceneDelays[obsScene] : undefined },
@@ -404,6 +416,7 @@ function statusJson() {
 
 engine.on('delay', ({ from, to }) => { log(`delay ${from / 1000}s -> ${to / 1000}s`); notify.send('delay', `Delay ${from / 1000}s -> ${to / 1000}s`); broadcast(); });
 engine.on('cut', ({ ms }) => { log(`cut ${(ms / 1000).toFixed(1)}s out of the buffer`); broadcast(); });
+engine.on('rewind', ({ ms, full }) => { log(`rewind: viewers see the last ${(ms / 1000).toFixed(1)}s again${full ? '' : ' (replay window too short for the whole raise; the delay screen covers the rest first)'}`); broadcast(); });
 engine.on('hold', ({ kind }) => { log(`output paused: sending ${kind === 'screen' ? 'the delay screen' : kind === 'freeze' ? 'the last frame' : 'silence'} meanwhile`); broadcast(); });
 engine.on('holdEnd', ({ ms }) => { log(`stream resumed after ${(ms / 1000).toFixed(1)}s`); broadcast(); });
 engine.on('warn', (w) => log(w));
@@ -462,9 +475,7 @@ function applyConfig(patch) {
   Object.assign(config, clean);
   cfgm.save(config);
   log.setSecrets(cfgm.allSecrets(config));
-  engine.maxDelayMs = config.maxDelaySec * 1000;
-  engine.maxBufferBytes = config.maxBufferMB * 1048576;
-  engine.replayMs = config.clipSec * 1000;
+  applyEngineConfig();
   notify.setUrl(config.webhookUrl);
   if (engine.delayMs > engine.maxDelayMs) engine.setDelay(engine.maxDelayMs);
   if (screenChanged) applyScreenConfig();
@@ -622,6 +633,7 @@ server.listen(config.httpPort, '127.0.0.1', () => {
   log(`  Dock -> http://127.0.0.1:${config.httpPort}/dock`);
   log(`  Overlay (browser source) -> http://127.0.0.1:${config.httpPort}/overlay`);
   log(`  Output -> ${cfgm.outputConfigured(config) ? cfgm.maskUrl(config.outputUrl) : '(no stream key yet)'}${config.bandwidthTest ? ' [BANDWIDTH TEST: the channel stays offline]' : ''}`);
+  log(`  Raising the delay: ${config.raiseMode === 'rewind' ? `rewind (viewers see the last seconds again; up to ${config.rewindSec}s kept)` : 'delay screen while the buffer fills'}`);
   log(`  Delay screen: ${config.delayScreen === 'off' ? 'off' : config.delayScreen === 'freeze' ? 'freeze last frame' : config.delayScreen === 'default' ? 'built-in' : config.delayScreen}${config.clipSec ? ` · clips: last ${config.clipSec}s` : ''}${config.recordDir ? ` · recording to ${config.recordDir}/` : ''}`);
   log('  Press Ctrl+C to stop.');
   input.start();

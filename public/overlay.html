@@ -40,7 +40,7 @@
     const delayed = s.effectiveDelayMs >= 1000 || s.filling || s.holding;
     badge.classList.toggle('delayed', delayed);
     badge.classList.toggle('filling', !!s.filling || !!s.holding); // blinks while viewers see the delay screen
-    document.getElementById('txt').textContent = s.holding ? `${label} · SCREEN` : delayed ? `${label} ${Math.round(s.effectiveDelayMs / 1000)}s` : 'LIVE';
+    document.getElementById('txt').textContent = s.holding ? `${label} · SCREEN` : delayed ? `${label} ${Math.round(s.effectiveDelayMs / 1000)}s${s.rewinding ? ' · REPLAY' : ''}` : 'LIVE';
     badge.style.opacity = (!delayed && hideLive) ? 0 : 1;
   };
 </script>

@@ -4,6 +4,10 @@ What InstantDelay could become, ranked by how much streamers would feel it versu
 
 Legend: 🟢 small (a day) · 🟡 medium (a week) · 🔴 big (weeks) · ⚠️ needs real-world testing first
 
+## Shipped in 2.2 (2026-10-30)
+
+- **Instant raise by rewind** (`raiseMode: rewind`, default): the replay window that already existed for clips is reused. Raising the delay puts the last N seconds back in front of the buffer, so the delay applies at once and viewers see those seconds again instead of a delay screen. The screen remains for cuts, OBS dropouts, `raiseMode: screen` and the part of a raise the window cannot cover. The countdown idea (#1) matters less now: the screen only shows for cuts and dropouts in the default mode.
+
 ## Shipped in 2.1 (2026-10-26)
 
 The real-world number came in: **Twitch drops a publisher after ~30 s without data**, so every delay raise above 30 s killed the stream. That turned "keep the ingest alive" from a maybe into the headline feature, and changed the plan: a *delay screen* drawn by InstantDelay itself beats switching OBS to a BRB scene (the BRB frames would only reach viewers after the fill anyway).

@@ -11,7 +11,7 @@ const PLACEHOLDER = 'YOUR_TWITCH_STREAM_KEY';
 
 // Keys that can be changed while running, and keys that need a restart.
 const LIVE_KEYS = ['outputUrl', 'outputUrlBackup', 'bandwidthTest', 'presetsSec', 'maxDelaySec', 'initialDelaySec', 'endAfterIdleSec', 'maxBufferMB',
-  'delayScreen', 'clipSec', 'clipDir', 'recordDir', 'webhookUrl', 'obsWsUrl', 'obsWsPassword', 'sceneDelays'];
+  'delayScreen', 'raiseMode', 'rewindSec', 'clipSec', 'clipDir', 'recordDir', 'webhookUrl', 'obsWsUrl', 'obsWsPassword', 'sceneDelays'];
 const RESTART_KEYS = ['rtmpHost', 'rtmpPort', 'ingestKey', 'httpPort', 'transport'];
 // Only editable in the file (it names a program to run).
 const FILE_ONLY_KEYS = ['ffmpegPath'];
@@ -60,7 +60,8 @@ function validate(c) {
   if ('presetsSec' in c && !(Array.isArray(c.presetsSec) && c.presetsSec.length <= 12 && c.presetsSec.every((p) => Number.isFinite(p) && p >= 0 && p <= 3600))) {
     errs.push('"presetsSec" must be a list of up to 12 numbers of seconds');
   }
-  num('clipSec', 0, 600);
+  num('clipSec', 0, 600); num('rewindSec', 0, 600);
+  if ('raiseMode' in c && !['rewind', 'screen'].includes(c.raiseMode)) errs.push('"raiseMode" must be "rewind" or "screen"');
   if ('transport' in c && !['native', 'ffmpeg'].includes(c.transport)) errs.push('"transport" must be "native" or "ffmpeg"');
   for (const k of ['outputUrl', 'outputUrlBackup', 'rtmpHost', 'ingestKey', 'ffmpegPath', 'delayScreen', 'clipDir', 'recordDir', 'webhookUrl', 'obsWsUrl', 'obsWsPassword']) {
     if (k in c && typeof c[k] !== 'string') errs.push(`"${k}" must be a string`);

@@ -8,6 +8,8 @@
   "initialDelaySec": 0,
   "endAfterIdleSec": 30,
   "delayScreen": "default",
+  "raiseMode": "rewind",
+  "rewindSec": 60,
   "clipSec": 60,
   "clipDir": "clips",
   "recordDir": "",

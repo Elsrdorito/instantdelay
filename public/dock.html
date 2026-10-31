@@ -70,6 +70,8 @@
   .filling .bar { display: block; }
   .holdtag { display: none; position: absolute; top: 8px; right: 10px; font: 600 9px/1 var(--font); letter-spacing: .14em; text-transform: uppercase; color: #ffd98a; background: #3a2a0e; border: 1px solid #6b4a0e; border-radius: 3px; padding: 3px 5px; z-index: 1; }
   .holding .holdtag { display: block; }
+  .rewindtag { color: #9ad4ff; background: #0e2436; border-color: #1a4a6b; }
+  .rewinding:not(.holding) .rewindtag { display: block; }
 
   /* controls */
   .instant { width: 100%; padding: 11px 8px; font-size: 15px; letter-spacing: .12em; text-transform: uppercase; background: linear-gradient(#2a7a4e, #1f5e3c); border-color: #2f8f5c; color: #eafff2; text-shadow: 0 1px 0 rgba(0,0,0,.4); }
@@ -158,6 +160,7 @@
 <section class="card" id="main">
   <div class="readout" id="readout">
     <span class="holdtag" id="holdtag">Delay screen</span>
+    <span class="holdtag rewindtag" id="rewindtag">Replay</span>
     <div class="k" id="label">Viewers are behind by</div>
     <div class="num off" id="num">–</div>
     <div class="bar"><div id="fill"></div></div>
@@ -198,7 +201,15 @@
   </div>
   <div class="field"><label class="k" for="fInit">Delay at startup (s)</label><input id="fInit" type="number" min="0" max="3600"></div>
 
-  <details open><summary>Delay screen · what viewers see while the delay builds</summary>
+  <div class="field"><label class="k" for="fRaise">When the delay goes up</label>
+    <select id="fRaise">
+      <option value="rewind">Rewind · viewers see the last N seconds again, the delay applies at once</option>
+      <option value="screen">Delay screen · viewers see the screen for N seconds while the buffer fills</option>
+    </select></div>
+  <div class="field" id="rewindRow"><label class="k" for="fRewind">Keep for rewinds (s)</label><input id="fRewind" type="number" min="0" max="600">
+    <small>How far back a rewind can reach. A bigger raise shows the delay screen for the difference first. Memory: bitrate × seconds, shared with clips.</small></div>
+
+  <details open><summary>Delay screen · what viewers see when the output has to pause</summary>
     <div class="field"><label class="k" for="fScreen">Show</label>
       <select id="fScreen">
         <option value="default">Built-in "Stream delay is building" screen</option>
@@ -364,6 +375,7 @@
     $('outNow').textContent = cfg.outputMasked ? 'Now: ' + cfg.outputMasked : 'No stream key set yet. Twitch: dashboard.twitch.tv → Settings → Stream → Primary Stream key.';
     $('fPresets').value = cfg.presetsSec.join(', ');
     $('fMax').value = cfg.maxDelaySec; $('fIdle').value = cfg.endAfterIdleSec; $('fInit').value = cfg.initialDelaySec;
+    $('fRaise').value = cfg.raiseMode; $('fRewind').value = cfg.rewindSec; $('rewindRow').style.display = cfg.raiseMode === 'rewind' ? '' : 'none';
     $('fScreen').value = screenChoice(cfg.delayScreen); $('screenUpload').style.display = $('fScreen').value === 'custom' ? '' : 'none';
     $('screenPrev').style.display = ['default', 'custom'].includes($('fScreen').value) ? '' : 'none';
     refreshPreview();
@@ -377,6 +389,7 @@
     $('fTransport').value = cfg.transport; $('fMaxBuf').value = cfg.maxBufferMB;
     $('saveMsg').textContent = ''; $('saveMsg').className = 'msg'; $('screenMsg').textContent = '';
   }
+  $('fRaise').onchange = () => { $('rewindRow').style.display = $('fRaise').value === 'rewind' ? '' : 'none'; };
   $('fScreen').onchange = () => {
     const v = $('fScreen').value;
     $('screenUpload').style.display = v === 'custom' ? '' : 'none';
@@ -418,6 +431,7 @@
       body = {
         presetsSec: presets, maxDelaySec: Number($('fMax').value), endAfterIdleSec: Number($('fIdle').value), initialDelaySec: Number($('fInit').value),
         delayScreen: screen === 'custom' ? (cfg && screenChoice(cfg.delayScreen) === 'custom' ? cfg.delayScreen : 'screens/custom.png') : screen,
+        raiseMode: $('fRaise').value, rewindSec: Number($('fRewind').value),
         clipSec: Number($('fClip').value), clipDir: $('fClipDir').value.trim() || 'clips', recordDir: $('fRecord').value.trim(),
         bandwidthTest: $('fBwTest').checked, webhookUrl: $('fWebhook').value.trim(),
         obsWsUrl: $('fObsUrl').value.trim(), sceneDelays: scenes,
@@ -487,11 +501,14 @@
     if (text !== lastNum) { num.innerHTML = text; lastNum = text; if (!noStream) { num.classList.add('tick'); setTimeout(() => num.classList.remove('tick'), 350); } }
     $('readout').classList.toggle('filling', st.filling);
     $('readout').classList.toggle('holding', !!st.holding);
+    $('readout').classList.toggle('rewinding', !!st.rewinding);
     $('holdtag').textContent = st.holdKind === 'screen' ? 'Delay screen' : st.holdKind === 'freeze' ? 'Frozen frame' : 'Silence';
+    $('rewindtag').textContent = `Replay · ${fmtS(st.rewindMs)} s`;
     $('fill').style.width = (st.fillProgress * 100) + '%';
     $('label').textContent = st.holding && !st.inputActive ? 'OBS is gone · viewers see the delay screen'
       : st.filling ? (st.holding ? 'Building delay · viewers see the delay screen' : 'Building delay · output paused')
-        : st.holding ? 'Viewers see the delay screen' : noStream ? 'Waiting for OBS' : 'Viewers are behind by';
+        : st.holding ? 'Viewers see the delay screen' : noStream ? 'Waiting for OBS'
+          : st.rewinding ? 'Viewers see a replay · behind by' : 'Viewers are behind by';
     $('subL').textContent = st.filling ? `${fmtS(st.bufferedMs)} / ${fmtS(st.delayMs)} s` : st.delayMs ? `target ${fmtS(st.delayMs)} s` : 'no delay';
     $('subR').textContent = st.inputActive ? `${st.inKbps} kb/s in` : '';
 

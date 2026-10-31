@@ -25,7 +25,8 @@ const sink = OUTPUT_RTMP ? spawn(FF, ['-hide_banner', '-loglevel', 'error', '-li
   '-c', 'copy', '-f', 'flv', '-y', outFile], { stdio: 'inherit' }) : null;
 const env = { ...process.env, OUTPUT_URL: OUTPUT_RTMP ? 'rtmp://127.0.0.1:19360/app/sekrit?x=1' : outFile, RTMP_PORT: '19355', HTTP_PORT: '18787', END_AFTER_IDLE_SEC: '2', TRANSPORT, INSTANTDELAY_CONFIG: path.join(tmp, 'config.json') };
 // Clips and the recording go to the temp folder (absolute paths are allowed in the file, not over HTTP).
-fs.writeFileSync(path.join(tmp, 'config.json'), JSON.stringify({ clipSec: 30, clipDir: path.join(tmp, 'clips'), recordDir: path.join(tmp, 'recordings') }));
+// The first raise checks the delay screen, so start in screen mode; rewind mode is switched on later over the API.
+fs.writeFileSync(path.join(tmp, 'config.json'), JSON.stringify({ clipSec: 30, raiseMode: 'screen', clipDir: path.join(tmp, 'clips'), recordDir: path.join(tmp, 'recordings') }));
 if (TRANSPORT === 'ffmpeg') env.FFMPEG_PATH = FF;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // On Windows some ffmpeg installs (Chocolatey) are shims that start the real ffmpeg as a child; kill the whole tree.
@@ -141,6 +142,24 @@ async function run() {
   r = await post({ delayScreen: 'default', bandwidthTest: false });
   j = await r.json();
   check(r.status === 200 && j.config.delayScreen === 'default', 'screen set back to the built-in one');
+  r = await post({ raiseMode: 'sideways' });
+  check(r.status === 400, 'bad raiseMode is rejected');
+  r = await post({ raiseMode: 'rewind', rewindSec: 20 });
+  j = await r.json();
+  check(r.status === 200 && j.config.raiseMode === 'rewind' && j.config.rewindSec === 20, 'rewind mode can be switched on live');
+  // Delay is 3 s and filled. Raising to 8 s now replays the last 5 s instead of showing the screen.
+  const holdsBefore = (await api('/api/status')).holds;
+  s = await api('/api/delay?sec=8');
+  check(s.delayMs === 8000 && !s.filling && s.effectiveDelayMs === 8000 && s.rewinding && s.rewinds === 1, `raise to 8s applies at once by rewinding (${s.rewindMs}ms of replay ahead)`);
+  await sleep(2000);
+  s = await api('/api/status');
+  check(!s.holding && s.holds === holdsBefore && s.rewinding && s.outputActive, 'no delay screen during the replay');
+  await sleep(5000);
+  s = await api('/api/status');
+  check(!s.rewinding && !s.filling && Math.abs(s.bufferedMs - 8000) < 300, `replay over, stream continues 8 s behind (buffered ${s.bufferedMs}ms)`);
+  s = await api('/api/instant');
+  check(s.delayMs === 0 && s.bufferedMs < 500, 'instant after a rewind jumps back to live');
+  await sleep(1500);
   check(!('obsWsPassword' in j.config) && !('outputUrlBackup' in j.config) && 'obsWsPasswordSet' in j.config, 'config view hides the OBS password and backup key');
   r = await post({ presetsSec: [0, 5] }, { 'Sec-Fetch-Site': 'cross-site' });
   check(r.status === 403, 'cross-site settings change is blocked');
@@ -153,7 +172,7 @@ async function run() {
   check(s.presetsSec.join() === '0,10,20' && s.maxDelaySec === 120 && s.inKbps > 100, `status reflects settings and bitrate (${s.inKbps} kbps)`);
 
   killTree(obs);
-  await sleep(3000 + 3000 + 2000 + 1000); // input timeout + drain 3s buffer + idle 2s + margin
+  await sleep(3000 + 2000 + 1000); // input timeout + idle 2s + margin (the buffer is empty: delay 0)
   s = await api('/api/status');
   check(!s.inputActive && !s.outputActive, 'output ended after OBS stopped');
   if (sink) {
@@ -176,8 +195,10 @@ async function verifyFile() {
   const errors = (probe.stderr + decode.stderr).trim();
   console.log(`RESULT video packets=${vids.length} duration=${(vids.at(-1) || 0).toFixed(2)}s maxDtsGap=${maxGap.toFixed(3)}s backwards=${backwards}`);
   check(vids.length > 300, 'output has enough video');
-  // Delay screens run at 10 fps, so holds add few packets; the cut and the instant jump remove many.
-  check(vids.length < 900, `output skipped the cut and the instant jump (${vids.length} packets)`);
+  // Delay screens run at 10 fps, so holds add few packets; the cut and the two instant jumps remove many.
+  // The rewind adds its 5 s (~150 packets) once more. Without the skips the file would hold ~1500 packets.
+  check(vids.length < 1200, `output skipped the cut and the instant jumps (${vids.length} packets)`);
+  check(vids.length > 600, `output includes the replayed seconds (${vids.length} packets)`);
   // A splice after B-frames sits (reorder depth + 34 ms) after the last decoded frame: up to ~0.24 s with bf=3.
   check(backwards === 0 && maxGap < 0.25, `output timeline is continuous (max gap ${maxGap.toFixed(3)}s, backwards ${backwards})`);
   check(!errors, `output (x264 + delay screens spliced in) decodes cleanly${errors ? `: ${errors.split('\n')[0]}` : ''}`);

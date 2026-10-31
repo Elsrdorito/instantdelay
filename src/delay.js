@@ -5,7 +5,11 @@
 // or a piece of the buffer is cut out.
 //
 //  - Lowering the delay -> jump forward to a keyframe (viewers see a clean cut).
-//  - Raising the delay  -> output pauses while the buffer fills up.
+//  - Raising the delay  -> `raiseMode` 'rewind' (default): content that already went
+//                          out during the last `delayMs` is taken back from the replay
+//                          window and sent again, so the new delay applies at once
+//                          (viewers see those seconds twice). 'screen': the output
+//                          pauses while the buffer fills up and the hold covers it.
 //  - cut(ms)            -> throw away the newest `ms` of buffered content (the
 //                          output pauses that long once it reaches the hole).
 //  - hold               -> whenever the output would pause for a while (fill,
@@ -69,7 +73,7 @@ class DelayEngine extends EventEmitter {
     this.lastVideoPts = -1; // display time of the latest-shown frame (B-frames display out of order)
     this.needKeyframe = true;
     this.headersSent = false;
-    this.stats = { inTags: 0, outTags: 0, dropped: 0, inBytes: 0, outBytes: 0, lastInAt: 0, lastOutAt: 0, holdTags: 0, holds: 0 };
+    this.stats = { inTags: 0, outTags: 0, dropped: 0, inBytes: 0, outBytes: 0, lastInAt: 0, lastOutAt: 0, holdTags: 0, holds: 0, rewinds: 0 };
     this._rate = { at: 0, inBytes: 0, outBytes: 0, inKbps: 0, outKbps: 0 };
     this._timer = null;
     this._auto = false;
@@ -82,10 +86,14 @@ class DelayEngine extends EventEmitter {
     this.holdUntil = 0; // previewHold(): keep holding (and skip due content) until this time
     this.lastRealOutAt = 0;
     this.lastKeyframe = null; // data of the last real video keyframe sent (for the freeze fallback)
-    // Replay window: content that already left the buffer, kept `replayMs` for "save a clip".
+    // Replay window: content that already left the buffer, kept `replayMs` for "save a clip"
+    // and for rewinds. The server sizes it to cover both.
     this.replayMs = 0;
     this.replay = new Deque();
     this.replayBytes = 0;
+    // How a raise is covered: 'rewind' (re-send what viewers just saw, instant) or 'screen' (hold while the buffer fills).
+    this.raiseMode = 'rewind';
+    this.rewindEndRecv = -1; // recv of the last rewound tag: viewers see a replay until it is due
   }
 
   // Let the engine release due tags on its own (real clock).
@@ -151,6 +159,7 @@ class DelayEngine extends EventEmitter {
   setDelay(ms, now = Date.now()) {
     const next = clamp(Math.round(ms), 0, this.maxDelayMs);
     if (next < this.delayMs) this._skipForward(next, now);
+    else if (next > this.delayMs && this.raiseMode === 'rewind') this._rewind(next, now);
     const prev = this.delayMs;
     this.delayMs = next;
     this.emit('delay', { from: prev, to: next });
@@ -247,6 +256,41 @@ class DelayEngine extends EventEmitter {
     this.bufferedBytes = bytes;
     // Make the keyframe follow the last frame we sent, so the output stays continuous.
     if (this.lastOutAny >= 0 && key.gen === this.outGen) this.outOffset = this._offsetAfterSent(key);
+  }
+
+  // Raise the delay without a pause: what already went out during the last `newDelay`
+  // (still in the replay window) is put back in front of the buffer, where it is due again
+  // right away under the new delay. Viewers see those seconds a second time, then the stream
+  // carries on `newDelay` behind live; no screen, no fill. Starts on the last keyframe at or
+  // before `now - newDelay`, so up to one GOP more is replayed (it goes out in a burst).
+  // When the replay window holds less than the raise, as much as it holds is rewound and the
+  // hold covers the rest before the replay. Returns the ms viewers jump back (0 = nothing to rewind).
+  _rewind(newDelay, now) {
+    if (!this.replay.length) return 0;
+    const from = now - newDelay;
+    const all = [...this.replay];
+    const isKey = (t) => t.type === TAG_VIDEO && t.isKey && !t.isSeq;
+    let start = -1;
+    for (let i = 0; i < all.length && all[i].recv <= from; i++) if (isKey(all[i])) start = i;
+    if (start < 0) start = all.findIndex(isKey);
+    if (start < 0) return 0;
+    // Codec config in force at the rewind point (the output's may be newer). Sequence headers
+    // inside the rewound content pass the output again and update it as usual.
+    for (let i = 0; i < start; i++) if (all[i].isSeq) this.headers.set(all[i].type, all[i].data);
+    const moved = all.slice(start);
+    let bytes = 0;
+    for (const t of moved) bytes += t.data.length;
+    this.replay.replace(all.slice(0, start));
+    this.replayBytes -= bytes;
+    const jumpMs = (this.buffer.length ? this.buffer.peek().recv : now) - moved[0].recv;
+    this.buffer.replace([...moved, ...this.buffer]);
+    this.bufferedBytes += bytes;
+    this.rewindEndRecv = moved[moved.length - 1].recv;
+    // The output restarts on the rewound keyframe, timestamps continuing after the last frame sent.
+    this.needKeyframe = true;
+    this.stats.rewinds++;
+    this.emit('rewind', { ms: jumpMs, tags: moved.length, full: moved[0].recv <= from });
+    return jumpMs;
   }
 
   tick(now = Date.now(), rearm = false) {
@@ -396,6 +440,8 @@ class DelayEngine extends EventEmitter {
     const live = now - this.stats.lastInAt < 3000;
     // While the delay is being raised the buffer holds less than the target.
     const filling = live && this.delayMs - bufferedMs > 300;
+    // Time left until the output is past rewound content (viewers watch a replay meanwhile).
+    const rewindMs = this.rewindEndRecv >= 0 ? Math.max(0, this.rewindEndRecv + this.delayMs - now) : 0;
     const r = this._rate;
     if (now - r.at >= 1000) {
       const dt = (now - r.at) / 1000;
@@ -421,6 +467,8 @@ class DelayEngine extends EventEmitter {
       holding: !!this.hold,
       holdKind: this.hold ? this.hold.session.kind : null,
       holdMs: this.hold ? now - this.hold.since : 0,
+      rewinding: rewindMs > 0,
+      rewindMs,
       ...this.stats,
     };
   }

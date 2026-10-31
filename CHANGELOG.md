@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.2.0 — 2026-10-30
+
+**Instant raise.** Raising the delay no longer makes viewers wait through a delay screen while the buffer fills. InstantDelay already kept the last minute of the stream for clips; now it rewinds into it.
+
+### Added
+- **Rewind on raise** (`raiseMode: "rewind"`, the new default): going from 0 to 30 s sends the last 30 s again, so the new delay applies the moment you press the button and viewers see a replay of those seconds, then the stream carries on 30 s behind live. No pause, no screen, no "building" bar. Starts on the keyframe at or before the mark (up to one GOP more replay); timestamps stay continuous; nothing is skipped.
+- `rewindSec` (default 60): how far back a rewind can reach. The replay window is shared with clips (`max(clipSec, rewindSec)` is kept). A raise bigger than the window shows the delay screen for the difference first, then the replay.
+- `raiseMode: "screen"` keeps the 2.1 behaviour (delay screen while the buffer fills).
+- Dock: *When the delay goes up* setting; a blue **Replay · N s** tag on the readout while viewers watch the rewound seconds. Overlay shows `DELAY 30s · REPLAY` meanwhile. Log line and `rewind` engine event.
+- Status: `rewinding`, `rewindMs` (replay time left), `rewinds`, `raiseMode`, `rewindSec`.
+
+### Changed
+- The delay screen is now mainly for cuts and OBS dropouts; the settings section is titled accordingly.
+- `clipAvailableMs` is capped at `clipSec + delay` even when the replay window is larger.
+
 ## 2.1.0 — 2026-10-26
 
 **The delay screen.** Raising the delay no longer freezes the stream (and no longer makes Twitch drop it after ~30 s): viewers see a picture while the buffer fills.
